@@ -57,3 +57,7 @@ run = "pnpm start:stdio"
 [tasks.mcp-smoke]
 description = "Run MCP tools smoke test (requires DB)"
 run = "pnpm mcp:smoke"
+
+[tasks.llm-smoke]
+description = "Run LLM client smoke test (requires LLM_LOW_API_KEY)"
+run = "pnpm llm:smoke"

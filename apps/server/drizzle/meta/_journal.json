@@ -15,6 +15,13 @@
       "when": 1781500000000,
       "tag": "0001_hybrid_search_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781430058870,
+      "tag": "0002_true_mindworm",
+      "breakpoints": true
     }
   ]
 }

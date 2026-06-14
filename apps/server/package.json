@@ -20,9 +20,11 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "search:smoke": "tsx src/core/search/smoke.ts",
-    "mcp:smoke": "tsx src/interfaces/mcp/smoke.ts"
+    "mcp:smoke": "tsx src/interfaces/mcp/smoke.ts",
+    "llm:smoke": "tsx src/external/llm/smoke.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
     "@hono/node-server": "^2.0.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@tsumugi/shared": "workspace:*",

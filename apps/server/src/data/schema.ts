@@ -14,6 +14,7 @@ import {
   jsonb,
   timestamp,
   primaryKey,
+  integer,
 } from "drizzle-orm/pg-core";
 import { vector } from "drizzle-orm/pg-core";
 
@@ -110,3 +111,26 @@ export const links = pgTable(
 
 export type Link = typeof links.$inferSelect;
 export type NewLink = typeof links.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// dreaming_runs (dreaming worker execution history)
+// ---------------------------------------------------------------------------
+export const dreamingRuns = pgTable("dreaming_runs", {
+  id: text("id").primaryKey(),
+  /** summarize | audn | synthesize | time-update | decision-contradiction | reflection | runner */
+  job_kind: text("job_kind").notNull(),
+  /** pending | running | completed | failed */
+  status: text("status").notNull().default("pending"),
+  started_at: timestamp("started_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  finished_at: timestamp("finished_at", { withTimezone: true }),
+  input_count: integer("input_count").notNull().default(0),
+  output_count: integer("output_count").notNull().default(0),
+  error_message: text("error_message"),
+  /** arbitrary additional info */
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+});
+
+export type DreamingRun = typeof dreamingRuns.$inferSelect;
+export type NewDreamingRun = typeof dreamingRuns.$inferInsert;
