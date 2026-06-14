@@ -1,5 +1,12 @@
 export type LlmTier = "low" | "mid";
 
+/**
+ * LLM provider 種別。tsumugi は特定の provider に依存しない設計で、
+ * OpenAI 互換 API を持つほぼ全ての provider (Z.ai / DeepSeek / OpenRouter /
+ * Ollama / OpenAI 本家) を openai-compat 1 つでカバーできる。
+ */
+export type LlmProvider = "anthropic" | "openai-compat";
+
 export interface LlmRequest {
   system: string;
   user: string;
