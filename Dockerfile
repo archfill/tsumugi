@@ -1,41 +1,63 @@
-# Tsumugi multi-stage Dockerfile (placeholder for Phase 1)
+# Tsumugi multi-stage Dockerfile
 #
 # Stages:
-#   1. ui-builder    : React admin UI を静的ファイルへビルド
-#   2. server-builder: server を tsc + bundle
-#   3. runtime       : node:22-alpine 上で起動
+#   1. builder : pnpm workspace 全体を install + UI / server を build
+#   2. runtime : 必要な node_modules + dist + 静的 UI のみコピー
 #
-# 完成後の概要サイズ目安: 200-300MB（@xenova/transformers モデルキャッシュ含めて）
+# Image 完成後のサイズ目安: 600-800MB（@xenova/transformers + onnxruntime-node 含む）
 
-# --- Stage 1: UI build ---
-FROM node:22-alpine AS ui-builder
+# onnxruntime-node の native binding は glibc 前提のため Debian ベース
+ARG NODE_VERSION=22-bookworm-slim
+ARG PNPM_VERSION=11.6.0
+
+# --- Stage 1: builder ---
+FROM node:${NODE_VERSION} AS builder
+ARG PNPM_VERSION
 WORKDIR /workspace
-RUN corepack enable
-COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
-COPY packages/shared ./packages/shared
-COPY apps/ui ./apps/ui
+
+# corepack で pnpm 固定（pnpm install を走らせる前に PATH に通す）
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+# 依存解決に必要な metadata を一式コピー（layer cache 効かせる）
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/server/package.json ./apps/server/
+COPY apps/ui/package.json ./apps/ui/
+
+# 全 workspace の依存をインストール
+# native build 許可は pnpm-workspace.yaml の allowBuilds が効く
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @tsumugi/ui build
 
-# --- Stage 2: Server build ---
-FROM node:22-alpine AS server-builder
-WORKDIR /workspace
-RUN corepack enable
-COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+# ソース一式コピー
 COPY packages/shared ./packages/shared
 COPY apps/server ./apps/server
-RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @tsumugi/server build
+COPY apps/ui ./apps/ui
 
-# --- Stage 3: Runtime ---
-FROM node:22-alpine AS runtime
+# 全 workspace を build
+RUN pnpm -r build
+
+# --- Stage 2: runtime ---
+FROM node:${NODE_VERSION} AS runtime
+ARG PNPM_VERSION
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8000
-RUN corepack enable
-COPY --from=server-builder /workspace/apps/server/dist ./dist
-COPY --from=server-builder /workspace/apps/server/package.json ./package.json
-COPY --from=ui-builder /workspace/apps/ui/dist ./public
-RUN pnpm install --prod --frozen-lockfile
+
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+# server の deploy（prod 依存のみ抽出）
+COPY --from=builder /workspace/pnpm-workspace.yaml /workspace/pnpm-lock.yaml /workspace/package.json /workspace/tsconfig.base.json ./
+COPY --from=builder /workspace/packages/shared ./packages/shared
+COPY --from=builder /workspace/apps/server ./apps/server
+COPY --from=builder /workspace/apps/ui/dist ./apps/ui/dist
+
+# server の prod 依存だけインストール
+RUN pnpm install --frozen-lockfile --filter @tsumugi/server... --prod
+
 EXPOSE 8000
-CMD ["node", "dist/index.js"]
+
+# HF キャッシュは volume にマウント想定
+ENV HF_CACHE=/app/.cache/huggingface
+
+# HTTP モードで起動（stdio が必要なら CMD override）
+CMD ["node", "apps/server/dist/index.js", "--http"]
