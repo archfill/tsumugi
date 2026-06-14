@@ -14,7 +14,8 @@
     "check": "pnpm typecheck",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "search:smoke": "tsx src/search/smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

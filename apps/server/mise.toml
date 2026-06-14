@@ -33,3 +33,7 @@ run = "pnpm db:migrate"
 [tasks.db-studio]
 description = "Open Drizzle Studio"
 run = "pnpm db:studio"
+
+[tasks.search-smoke]
+description = "Run hybrid search smoke test"
+run = "pnpm search:smoke"
