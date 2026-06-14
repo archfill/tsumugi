@@ -23,7 +23,11 @@
     "mcp:smoke": "tsx src/interfaces/mcp/smoke.ts",
     "llm:smoke": "tsx src/external/llm/smoke.ts",
     "summarize:smoke": "tsx src/core/observation/summarize.smoke.ts",
-    "audn:smoke": "tsx src/core/dreaming/audn.smoke.ts"
+    "audn:smoke": "tsx src/core/dreaming/audn.smoke.ts",
+    "synthesize:smoke": "tsx src/core/dreaming/synthesize.smoke.ts",
+    "time-update:smoke": "tsx src/core/dreaming/time-update.smoke.ts",
+    "decision-contradiction:smoke": "tsx src/core/dreaming/decision-contradiction.smoke.ts",
+    "reflection:smoke": "tsx src/core/dreaming/reflection.smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

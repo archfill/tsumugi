@@ -69,3 +69,19 @@ run = "pnpm summarize:smoke"
 [tasks.audn-smoke]
 description = "Run AUDN judge smoke test (requires DATABASE_URL + LLM_MID_API_KEY)"
 run = "pnpm audn:smoke"
+
+[tasks.synthesize-smoke]
+description = "Run synthesize memories smoke test (requires DATABASE_URL + LLM_LOW_API_KEY)"
+run = "pnpm synthesize:smoke"
+
+[tasks.time-update-smoke]
+description = "Run time-aware memory update smoke test (requires DATABASE_URL + LLM_LOW_API_KEY)"
+run = "pnpm time-update:smoke"
+
+[tasks.decision-contradiction-smoke]
+description = "Run decision contradiction detector smoke test (requires DATABASE_URL + LLM_MID_API_KEY)"
+run = "pnpm decision-contradiction:smoke"
+
+[tasks.reflection-smoke]
+description = "Run session reflection smoke test (requires DATABASE_URL + LLM_LOW_API_KEY)"
+run = "pnpm reflection:smoke"
