@@ -1,0 +1,23 @@
+[tasks.dev]
+description = "Run MCP server in dev mode (tsx watch)"
+run = "pnpm dev"
+
+[tasks.build]
+description = "Build server"
+run = "pnpm build"
+
+[tasks.start]
+description = "Run built server"
+run = "pnpm start"
+
+[tasks.typecheck]
+description = "tsc -b --noEmit"
+run = "pnpm typecheck"
+
+[tasks.test]
+description = "Run tests"
+run = "pnpm test"
+
+[tasks.check]
+description = "All checks"
+run = "pnpm check"

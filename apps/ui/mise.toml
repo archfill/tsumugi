@@ -1,0 +1,15 @@
+[tasks.dev]
+description = "Run admin UI (Vite)"
+run = "pnpm dev"
+
+[tasks.build]
+description = "Build UI for production"
+run = "pnpm build"
+
+[tasks.typecheck]
+description = "tsc -b --noEmit"
+run = "pnpm typecheck"
+
+[tasks.check]
+description = "Typecheck + build"
+run = "pnpm check"

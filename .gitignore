@@ -1,0 +1,47 @@
+# Node / TypeScript
+node_modules/
+dist/
+build/
+.tsbuildinfo
+*.tsbuildinfo
+
+# pnpm
+.pnpm-store/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# DB / data
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# ML models / cache
+hf_cache/
+models/
+.cache/
+.transformers-cache/
+
+# Logs
+*.log
+logs/
+
+# Vite
+.vite/
+
+# Misc
+*.tgz
+.turbo/

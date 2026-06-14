@@ -1,0 +1,55 @@
+# Tsumugi local compose (placeholder)
+#
+# Production の compose は infra-configs 側で管理する想定。
+# このファイルは開発・動作確認用。
+#
+# 起動:
+#   docker compose up -d
+#
+# 内訳:
+#   - tsumugi-postgres : Postgres 16 + pgvector + pg_bigm
+#   - tsumugi-server   : MCP server + REST API + dreaming worker
+
+services:
+  tsumugi-postgres:
+    # NOTE: pg_bigm を含むカスタムイメージが必要。
+    # Phase 1 で Dockerfile.postgres を用意し置き換える。
+    image: pgvector/pgvector:pg16
+    container_name: tsumugi-postgres
+    environment:
+      POSTGRES_DB: tsumugi
+      POSTGRES_USER: tsumugi
+      POSTGRES_PASSWORD: ${TSUMUGI_PG_PASSWORD:-tsumugi_dev}
+    volumes:
+      - tsumugi-pg-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tsumugi -d tsumugi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tsumugi-server:
+    # Phase 1 で Dockerfile を完成させて利用する。
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tsumugi-server
+    environment:
+      DATABASE_URL: postgresql://tsumugi:${TSUMUGI_PG_PASSWORD:-tsumugi_dev}@tsumugi-postgres:5432/tsumugi
+      NODE_ENV: production
+      HF_CACHE: /app/.cache/huggingface
+    volumes:
+      - tsumugi-hf-cache:/app/.cache/huggingface
+    ports:
+      - "8000:8000"
+    depends_on:
+      tsumugi-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  tsumugi-pg-data:
+  tsumugi-hf-cache:

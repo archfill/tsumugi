@@ -1,0 +1,25 @@
+{
+  "name": "tsumugi",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Tsumugi - MCP-based memory layer (server + admin UI monorepo)",
+  "author": "archfill",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:server": "pnpm --filter @tsumugi/server dev",
+    "dev:ui": "pnpm --filter @tsumugi/ui dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "check": "pnpm -r check"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}
