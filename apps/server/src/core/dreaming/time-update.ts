@@ -14,6 +14,7 @@ import { memoryRepo } from "../../data/repos/memory.js";
 import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { newId } from "../../lib/id.js";
 import { ExternalError } from "../../lib/errors.js";
+import { logger } from "../../lib/logger.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -210,7 +211,13 @@ export async function timeAwareMemoryUpdate(opts?: {
             ? `memory ${memory.id}: ${err.message}`
             : `memory ${memory.id}: unknown error`;
         errors.push(msg);
-        console.warn(`[time-update] ${msg}`);
+        logger.warn(
+          {
+            memoryId: memory.id,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "time-update failed for memory",
+        );
       }
     }
 

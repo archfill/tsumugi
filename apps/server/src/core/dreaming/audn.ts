@@ -15,6 +15,7 @@ import { memoryRepo } from "../../data/repos/memory.js";
 import { linkRepo } from "../../data/repos/link.js";
 import { newId } from "../../lib/id.js";
 import { ValidationError } from "../../lib/errors.js";
+import { logger } from "../../lib/logger.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -175,8 +176,13 @@ Decide which (if any) memory is the target, or whether to add a new one.`;
     !targetMemory
   ) {
     // target_index out of range → fallback to NOOP.
-    console.warn(
-      `[audn] target_index=${target_index} out of range (${existingMemories.length} memories) — fallback NOOP`,
+    logger.warn(
+      {
+        targetIndex: target_index,
+        memoryCount: existingMemories.length,
+        sourceObservationId,
+      },
+      "AUDN target_index out of range, fallback to NOOP",
     );
     return { decision: "NOOP", reasoning };
   }

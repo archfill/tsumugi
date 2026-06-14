@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "./server.js";
 import { restApp } from "../rest/routes.js";
+import { logger } from "../../lib/logger.js";
 
 type Env = { Bindings: HttpBindings };
 type StreamableTransport = WebStandardStreamableHTTPServerTransport;
@@ -59,5 +60,5 @@ export async function startHttp(port: number): Promise<void> {
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   serve({ fetch: app.fetch, port });
-  console.log(`tsumugi http listening on :${port}`);
+  logger.info({ port, mode: "http" }, "tsumugi http server listening");
 }

@@ -1,5 +1,6 @@
 import process from "node:process";
 import { env, pipeline } from "@xenova/transformers";
+import { logger } from "../../lib/logger.js";
 
 export interface Embedder {
   embed(text: string): Promise<Float32Array>;
@@ -43,7 +44,10 @@ export function createBgeEmbedder(opts?: BgeEmbedderOptions): Embedder {
       const output = await pipe(text, { pooling: "cls", normalize: true });
       const data = output.data as Float32Array;
       if (data.length !== 1024) {
-        console.warn(`[embedding] expected 1024 dims but got ${data.length}`);
+        logger.warn(
+          { expected: 1024, actual: data.length },
+          "embedding dim mismatch",
+        );
       }
       return data;
     },
