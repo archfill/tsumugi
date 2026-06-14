@@ -1,6 +1,6 @@
 # Tsumugi local compose (placeholder)
 #
-# Production の compose は infra-configs 側で管理する想定。
+# Production の compose は別途管理する想定。
 # このファイルは開発・動作確認用。
 #
 # 起動:

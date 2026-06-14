@@ -209,9 +209,9 @@ export const fixtures: FixtureCase<PromoteInput, PromoteExpected>[] = [
     id: "promote-keep-11-infrastructure",
     description: "Infrastructure decision",
     input: {
-      source: "yui",
+      source: "other",
       type: "decision",
-      content: "pve-docker は yui 専用ではなく多サービス同居の共有ホスト。",
+      content: "本番デプロイ先は他サービスと同居の共有 Docker ホスト。",
     },
     expected: { skip: false },
   },
