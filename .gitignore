@@ -23,11 +23,11 @@ build/
 coverage/
 .nyc_output/
 
-# DB / data
+# DB / data dumps (root-level only; src/data/ は永続化層なので除外しない)
 *.db
 *.sqlite
 *.sqlite3
-data/
+/data/
 
 # ML models / cache
 hf_cache/
