@@ -19,8 +19,15 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1781430058870,
+      "when": 1781500001000,
       "tag": "0002_true_mindworm",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781500002000,
+      "tag": "0003_black_steel_serpent",
       "breakpoints": true
     }
   ]

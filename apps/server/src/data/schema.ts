@@ -39,6 +39,8 @@ export const observations = pgTable("observations", {
   created_at: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  /** NULL = not yet promoted to Layer 2 by the dreaming worker */
+  promoted_at: timestamp("promoted_at", { withTimezone: true }),
 });
 
 export type Observation = typeof observations.$inferSelect;

@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 import { db } from "../client.js";
 import { observations } from "../schema.js";
 
@@ -25,14 +25,27 @@ export const observationRepo = {
   async deleteById(id: string): Promise<void> {
     await db.delete(observations).where(eq(observations.id, id));
   },
-  // dreaming worker: observations not yet promoted to Layer 2
-  // Simplified impl: latest N by created_at (refine per job in phase 2)
-  async listPending(limit = 50): Promise<ObservationRow[]> {
+  async listRecent(limit = 100): Promise<ObservationRow[]> {
     return await db
       .select()
       .from(observations)
       .orderBy(desc(observations.created_at))
       .limit(limit);
+  },
+  // dreaming worker: observations not yet promoted to Layer 2
+  async listPending(limit = 50): Promise<ObservationRow[]> {
+    return await db
+      .select()
+      .from(observations)
+      .where(isNull(observations.promoted_at))
+      .orderBy(desc(observations.created_at))
+      .limit(limit);
+  },
+  async markPromoted(id: string, promotedAt = new Date()): Promise<void> {
+    await db
+      .update(observations)
+      .set({ promoted_at: promotedAt })
+      .where(eq(observations.id, id));
   },
   async listForSession(
     sessionId: string,

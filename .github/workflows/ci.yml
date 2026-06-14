@@ -19,16 +19,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11.6.0
           run_install: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: pnpm
@@ -44,3 +44,40 @@ jobs:
 
       - name: Test (all workspaces)
         run: pnpm -r test
+
+  integration:
+    name: db integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.6.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start PostgreSQL
+        run: docker compose up -d --build --wait tsumugi-postgres
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://tsumugi:tsumugi_dev@localhost:5433/tsumugi
+        run: pnpm -C apps/server db:migrate
+
+      - name: Database smoke
+        env:
+          DATABASE_URL: postgresql://tsumugi:tsumugi_dev@localhost:5433/tsumugi
+        run: pnpm -C apps/server db:smoke

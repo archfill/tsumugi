@@ -1,58 +1,59 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import type { HttpBindings } from "@hono/node-server";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "./server.js";
 import { restApp } from "../rest/routes.js";
 
 type Env = { Bindings: HttpBindings };
+type StreamableTransport = WebStandardStreamableHTTPServerTransport;
 
 export async function startHttp(port: number): Promise<void> {
   const app = new Hono<Env>();
   app.route("/api", restApp);
 
   // Session registry: sessionId → transport
-  const transports = new Map<string, SSEServerTransport>();
+  const transports = new Map<string, StreamableTransport>();
 
-  // SSE endpoint — client opens a GET to establish the stream
-  app.get("/mcp/sse", async (c) => {
-    const { outgoing } = c.env;
-    const res = outgoing as ServerResponse;
-
+  async function createTransport(): Promise<StreamableTransport> {
     const server = createMcpServer();
-    const transport = new SSEServerTransport("/mcp/messages", res);
-    transports.set(transport.sessionId, transport);
-
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: randomUUID,
+      onsessioninitialized: (sessionId) => {
+        transports.set(sessionId, transport);
+      },
+      onsessionclosed: (sessionId) => {
+        transports.delete(sessionId);
+      },
+    });
     transport.onclose = () => {
-      transports.delete(transport.sessionId);
+      if (transport.sessionId) {
+        transports.delete(transport.sessionId);
+      }
     };
-
     await server.connect(transport);
-    // server.connect calls transport.start() which writes SSE headers and keeps the response open
-    // Return an empty response so Hono doesn't interfere
-    return new Response(null, { status: 200 });
-  });
+    return transport;
+  }
 
-  // Message endpoint — client POSTs JSON-RPC messages here
-  app.post("/mcp/messages", async (c) => {
-    const sessionId = c.req.query("sessionId");
-    if (!sessionId) {
-      return c.json({ error: "sessionId required" }, 400);
-    }
-
-    const transport = transports.get(sessionId);
+  app.all("/mcp", async (c) => {
+    const sessionId = c.req.header("mcp-session-id");
+    let transport = sessionId ? transports.get(sessionId) : undefined;
     if (!transport) {
-      return c.json({ error: "no session found for sessionId" }, 404);
+      if (sessionId) {
+        return c.json(
+          {
+            jsonrpc: "2.0",
+            error: { code: -32001, message: "Session not found" },
+            id: null,
+          },
+          404,
+        );
+      }
+      transport = await createTransport();
     }
 
-    const { incoming, outgoing } = c.env;
-    await transport.handlePostMessage(
-      incoming as IncomingMessage,
-      outgoing as ServerResponse,
-    );
-
-    return new Response(null, { status: 200 });
+    return transport.handleRequest(c.req.raw);
   });
 
   app.get("/health", (c) => c.json({ status: "ok" }));
