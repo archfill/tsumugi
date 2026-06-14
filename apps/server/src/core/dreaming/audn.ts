@@ -42,26 +42,34 @@ export interface AudnJudgeInput {
 // LLM prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `あなたは記憶層の差分判定担当 (AUDN: ADD/UPDATE/DELETE/NOOP)。
-新規 fact と既存 memory 群を比較し、次の判定を 1 件返してください。
+const SYSTEM_PROMPT = `You are the AUDN (ADD/UPDATE/DELETE/NOOP) judge for the memory layer.
+Compare a new fact against existing similar memories and return exactly one
+judgement.
 
-判定基準:
-- ADD: new_fact が独立した新情報。既存 memory のどれとも主題が異なる
-- UPDATE: 既存 memory の主題と一致するが内容が更新されている (target_index で対象を指定)
-- DELETE: new_fact が既存 memory の撤回・否定 (target_index で対象を指定)
-- NOOP: new_fact と等価な情報が既に存在し、追加情報なし (target_index 不要)
+## Decision criteria
+- ADD: new_fact is independent new information. Its subject differs from every
+  existing memory.
+- UPDATE: subject matches an existing memory but its content has changed
+  (specify target with target_index).
+- DELETE: new_fact retracts / negates an existing memory (specify target with
+  target_index).
+- NOOP: an equivalent fact already exists; no new information.
 
-主題継続の判定例:
-- "OAuth を採用" + "OAuth 2.0 ではなく SAML に変更" → UPDATE (主題=認証方式)
-- "DB は MySQL" + "前述の MySQL 採用は撤回" → DELETE (主題=DB 選定)
-- "memory 1024 dim" + "BGE-M3 採用" → ADD (主題が独立)
-- "auth は OAuth" + "OAuth を使う" → NOOP (等価)
+## Subject-continuity examples
+- "Adopt OAuth" + "Switch from OAuth 2.0 to SAML"  → UPDATE (subject = auth method)
+- "DB is MySQL" + "MySQL adoption is withdrawn"     → DELETE (subject = DB choice)
+- "Embedding dim = 1024" + "Adopt BGE-M3"           → ADD    (subjects independent)
+- "Auth uses OAuth" + "OAuth is the auth method"    → NOOP   (equivalent)
 
-出力 JSON:
+## Output language
+Write new_narrative and reasoning in the same natural language as the inputs.
+Preserve code symbols / identifiers / English product names verbatim.
+
+## Output JSON
 {
   "decision": "ADD" | "UPDATE" | "DELETE" | "NOOP",
-  "target_index": number | null,   // UPDATE/DELETE のとき指定、ADD/NOOP では null
-  "new_narrative": string | null,  // ADD/UPDATE のとき新しい narrative、DELETE/NOOP では null
+  "target_index": number | null,   // index of target memory for UPDATE/DELETE; null for ADD/NOOP
+  "new_narrative": string | null,  // new narrative for ADD/UPDATE; null for DELETE/NOOP
   "reasoning": string
 }`;
 
@@ -128,13 +136,13 @@ export async function audnJudge(input: AudnJudgeInput): Promise<AudnResult> {
   // 4. Call MID-tier LLM for judgement.
   const llm = getLlm("mid");
 
-  const userPrompt = `新規 fact:
+  const userPrompt = `New fact:
 ${newFact}
 
-既存 memory:
+Existing memories:
 ${existingMemories.map((m, i) => `[${i}] ${m.narrative}`).join("\n")}
 
-何件目を target にするか、あるいは新規追加か、判定してください。`;
+Decide which (if any) memory is the target, or whether to add a new one.`;
 
   const raw = await llm.completeJson<unknown>({
     system: SYSTEM_PROMPT,

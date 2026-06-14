@@ -18,42 +18,49 @@ import type { ObservationRow } from "../../data/repos/observation.js";
 // Prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `あなたは記憶層に取り込む観測の整形担当です。
-これは AI エージェントが将来のセッションで作業を継続するための「作業記憶」であり、個人の日記やライフログではありません。
+const SYSTEM_PROMPT = `You shape raw observations before they enter the memory layer.
 
-## skip = true (保存しない) にすべきケース
-個人の生活・嗜好・気分・天気・食事・娯楽など、後で AI エージェントが
-作業の文脈として参照しないものは積極的に skip してください。
-具体例:
-- "今日のランチはカレーライスにした"           (個人の食事・ライフログ)
-- "天気予報では明日は雨らしい"                 (環境情報、作業に直結しない)
-- "おはようございます" / "了解しました"        (挨拶・確認応答)
-- "なるほど"   "うれしい"  "疲れた"            (感情・反応のみ)
-- "あいうえお" (誤入力やテスト文字列)
+This memory exists so that an AI agent can resume work across future sessions.
+It is working memory for engineering / operational context, not a personal
+journal or lifelog.
 
-ただし source が claude-code / codex / yui の場合は「作業文脈」の可能性が高いので
-保守的に判定する (保存寄り)。type が decision / blocker / discovery / reflection は
-原則 skip しない。
+## When to skip (skip = true)
+Skip observations that the agent will not need as future work context. Examples:
+- "I had curry for lunch today"               (personal food log)
+- "Tomorrow looks rainy"                       (ambient info, not work-relevant)
+- "Hi" / "Got it" / "Thanks"                   (greetings, acknowledgements)
+- "Nice" / "Frustrating" / "Tired"             (emotional reaction only)
+- "asdf" / "test123"                           (typos, test strings)
 
-## skip = false (保存する) にすべきケース
-- 設計判断、bug 修正、API 変更、調査結果、ライブラリ選定、運用上の決定
-- 「N 時に何々を完了した」「実装方針はこうした」など作業の進行
-- ユーザーの **永続的な** 嗜好・制約・ロール (一回限りの選好ではなく)
+Exception: when source is claude-code / codex / yui the content is likely work
+context, so lean toward keeping. When type is decision / blocker / discovery /
+reflection, do not skip in principle.
 
-## skip = false の出力
-- facts: 1 fact = 1 文、独立して意味が通る粒度 (3-5 件目安)
-- narrative: 1-2 文の要約。検索クエリにマッチしやすいキーワード (関数名・コードシンボル等) を残す
+## When to keep (skip = false)
+- Design decisions, bug fixes, API changes, investigations, library choices,
+  operational decisions
+- Progress updates ("finished X", "implementation approach was Y")
+- The user's **durable** preferences / constraints / role (not one-off taste)
 
-## 出力 JSON スキーマ
+## Output for skip = false
+- facts: each fact is a single self-contained sentence (3–5 facts as a guide)
+- narrative: 1–2 sentence summary. Preserve searchable keywords (function names,
+  code symbols, identifiers) verbatim
+
+## Output language
+Reply in the same natural language as the observation content. Code symbols,
+identifiers, English library / product names stay verbatim in any language.
+
+## Output JSON schema
 {
   "skip": boolean,
-  "narrative": string,         // skip=true なら空文字列
-  "facts": string[],           // skip=true なら []
-  "reasoning": string          // なぜそう判定したかを 1 文で
+  "narrative": string,    // empty string when skip=true
+  "facts": string[],      // [] when skip=true
+  "reasoning": string     // one sentence explaining the judgement
 }`;
 
 function buildUserPrompt(observation: ObservationRow): string {
-  return `観測:
+  return `Observation:
 <source>${observation.source}</source>
 <type>${observation.type}</type>
 <content>
