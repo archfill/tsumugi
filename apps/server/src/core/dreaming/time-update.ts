@@ -152,8 +152,8 @@ export async function timeAwareMemoryUpdate(opts?: {
   await dreamingRunRepo.markRunning(runId);
 
   try {
-    // 2. Load active memories.
-    const memories = await memoryRepo.listActive(maxMemories);
+    // 2. Load LLM-eligible memories (skip quarantined / in cooldown).
+    const memories = await memoryRepo.listLlmEligible(maxMemories);
     const scanned = memories.length;
 
     // Update input_count now that we know it.
@@ -196,16 +196,19 @@ export async function timeAwareMemoryUpdate(opts?: {
         // 4. Re-embed with updated narrative.
         const embedding = Array.from(await embedder.embed(newNarrative));
 
-        // 5. Persist.
+        // 5. Persist + reset LLM failure counter.
         await memoryRepo.update(memory.id, {
           narrative: newNarrative,
           embedding,
           importance,
           kind,
         });
+        await memoryRepo.resetLlmFailures(memory.id);
 
         updated++;
       } catch (err) {
+        // Layer 2 failure tracking: record per-memory failure + maybe quarantine.
+        const { quarantined } = await memoryRepo.recordLlmFailure(memory.id);
         const msg =
           err instanceof Error
             ? `memory ${memory.id}: ${err.message}`
@@ -214,6 +217,7 @@ export async function timeAwareMemoryUpdate(opts?: {
         logger.warn(
           {
             memoryId: memory.id,
+            quarantined,
             err: err instanceof Error ? err.message : String(err),
           },
           "time-update failed for memory",

@@ -161,8 +161,8 @@ export async function synthesizeMemories(
   try {
     await dreamingRunRepo.markRunning(runId);
 
-    // 1. Load active memories.
-    const allMemories = await memoryRepo.listActive(maxMemories);
+    // 1. Load LLM-eligible memories (skip quarantined / in cooldown).
+    const allMemories = await memoryRepo.listLlmEligible(maxMemories);
 
     // 2. Filter to those with valid embeddings.
     const memoriesWithEmbedding: MemoryWithEmbedding[] = allMemories
@@ -253,6 +253,10 @@ export async function synthesizeMemories(
           memoriesArchived++;
         }
       } catch (err) {
+        // Layer 2 failure tracking: record failure on each cluster member.
+        for (const member of cluster) {
+          await memoryRepo.recordLlmFailure(member.id);
+        }
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`cluster(${cluster.map((m) => m.id).join(",")}): ${msg}`);
       }
