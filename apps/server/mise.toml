@@ -85,3 +85,27 @@ run = "pnpm decision-contradiction:smoke"
 [tasks.reflection-smoke]
 description = "Run session reflection smoke test (requires DATABASE_URL + LLM_LOW_API_KEY)"
 run = "pnpm reflection:smoke"
+
+[tasks.dream-promote]
+description = "Run promote-observations dreaming job"
+run = "pnpm dream:promote"
+
+[tasks.dream-synthesize]
+description = "Run synthesize dreaming job"
+run = "pnpm dream:synthesize"
+
+[tasks.dream-time-update]
+description = "Run time-update dreaming job"
+run = "pnpm dream:time-update"
+
+[tasks.dream-decision]
+description = "Run decision-contradiction dreaming job"
+run = "pnpm dream:decision"
+
+[tasks.dream-full]
+description = "Run full dreaming pipeline (promote → synthesize → time-update → decision-contradiction)"
+run = "pnpm dream:full"
+
+[tasks.dreaming-smoke]
+description = "Run dreaming runner smoke test (requires DATABASE_URL + LLM_LOW_API_KEY + LLM_MID_API_KEY)"
+run = "pnpm dreaming:smoke"

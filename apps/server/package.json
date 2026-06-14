@@ -27,7 +27,13 @@
     "synthesize:smoke": "tsx src/core/dreaming/synthesize.smoke.ts",
     "time-update:smoke": "tsx src/core/dreaming/time-update.smoke.ts",
     "decision-contradiction:smoke": "tsx src/core/dreaming/decision-contradiction.smoke.ts",
-    "reflection:smoke": "tsx src/core/dreaming/reflection.smoke.ts"
+    "reflection:smoke": "tsx src/core/dreaming/reflection.smoke.ts",
+    "dream:promote": "tsx src/core/dreaming/cli.ts promote-observations",
+    "dream:synthesize": "tsx src/core/dreaming/cli.ts synthesize",
+    "dream:time-update": "tsx src/core/dreaming/cli.ts time-update",
+    "dream:decision": "tsx src/core/dreaming/cli.ts decision-contradiction",
+    "dream:full": "tsx src/core/dreaming/cli.ts full",
+    "dreaming:smoke": "tsx src/core/dreaming/runner.smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

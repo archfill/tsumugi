@@ -11,6 +11,14 @@ import {
   SEARCH_MEMORY_TOOL,
   handleSearchMemory,
 } from "./tools/search-memory.js";
+import {
+  TRIGGER_DREAMING_TOOL,
+  handleTriggerDreaming,
+} from "./tools/trigger-dreaming.js";
+import {
+  GET_DREAMING_STATUS_TOOL,
+  handleGetDreamingStatus,
+} from "./tools/get-dreaming-status.js";
 
 export function createMcpServer(): Server {
   const server = new Server(
@@ -19,7 +27,12 @@ export function createMcpServer(): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [SAVE_OBSERVATION_TOOL, SEARCH_MEMORY_TOOL],
+    tools: [
+      SAVE_OBSERVATION_TOOL,
+      SEARCH_MEMORY_TOOL,
+      TRIGGER_DREAMING_TOOL,
+      GET_DREAMING_STATUS_TOOL,
+    ],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -30,6 +43,10 @@ export function createMcpServer(): Server {
       result = await handleSaveObservation(args);
     } else if (name === "search_memory") {
       result = await handleSearchMemory(args);
+    } else if (name === "trigger_dreaming") {
+      result = await handleTriggerDreaming(args);
+    } else if (name === "get_dreaming_status") {
+      result = await handleGetDreamingStatus(args);
     } else {
       throw new Error(`Unknown tool: ${name}`);
     }
