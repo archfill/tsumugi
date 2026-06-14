@@ -7,7 +7,7 @@
 
 import { SearchInput as SearchInputSchema } from "@tsumugi/shared";
 import type { SearchInput, SearchHit } from "@tsumugi/shared";
-import { getEmbedder } from "../embedding/singleton.js";
+import { getEmbedder } from "../../external/embedding/singleton.js";
 import { bigmSearch } from "./bigm.js";
 import { vectorSearch } from "./vector.js";
 import { rrfFuse } from "./rrf.js";

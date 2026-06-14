@@ -5,14 +5,14 @@
  *
  * Usage:
  *   DATABASE_URL=postgresql://tsumugi:tsumugi_dev@localhost:5433/tsumugi \
- *     pnpm exec tsx src/mcp/smoke.ts
+ *     pnpm exec tsx src/interfaces/mcp/smoke.ts
  *
  * Prerequisites: docker compose up -d tsumugi-postgres && pnpm db:migrate
  */
 
 import process from "node:process";
-import { db } from "../db/client.js";
-import { observations } from "../db/schema.js";
+import { db } from "../../data/client.js";
+import { observations } from "../../data/schema.js";
 import { eq } from "drizzle-orm";
 import {
   handleSaveObservation,

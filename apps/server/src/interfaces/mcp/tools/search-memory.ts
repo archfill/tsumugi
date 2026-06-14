@@ -1,6 +1,6 @@
 import { SearchInput } from "@tsumugi/shared";
 import type { SearchHit } from "@tsumugi/shared";
-import { hybridSearch } from "../../search/index.js";
+import { hybridSearch } from "../../../core/search/hybrid.js";
 
 export const SEARCH_MEMORY_TOOL = {
   name: "search_memory",

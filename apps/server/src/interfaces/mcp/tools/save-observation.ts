@@ -1,8 +1,4 @@
-import { ObservationInput } from "@tsumugi/shared";
-import { db } from "../../db/client.js";
-import { observations } from "../../db/schema.js";
-import { newId } from "../../db/id.js";
-import { getEmbedder } from "../../embedding/singleton.js";
+import { saveObservation } from "../../../core/observation/save.js";
 
 export const SAVE_OBSERVATION_TOOL = {
   name: "save_observation",
@@ -64,23 +60,6 @@ export interface SaveObservationResult {
 export async function handleSaveObservation(
   rawInput: unknown,
 ): Promise<SaveObservationResult> {
-  const input = ObservationInput.parse(rawInput);
-  const embedder = getEmbedder();
-  const emb = await embedder.embed(input.content);
-
-  const id = newId("obs");
-  await db.insert(observations).values({
-    id,
-    content: input.content,
-    type: input.type,
-    source: input.source,
-    session_id: input.session_id ?? null,
-    project_tag: input.project_tag ?? null,
-    facts: input.facts ?? null,
-    metadata: input.metadata ?? null,
-    // Float32Array → number[] for Drizzle vector column
-    embedding: Array.from(emb),
-  });
-
-  return { id, layer: "observation" as const };
+  const result = await saveObservation(rawInput);
+  return { id: result.id, layer: "observation" as const };
 }

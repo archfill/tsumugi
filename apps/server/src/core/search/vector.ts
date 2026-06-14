@@ -10,7 +10,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import { db } from "../db/client.js";
+import { db } from "../../data/client.js";
 import type { SearchInput } from "@tsumugi/shared";
 
 export interface VectorHit {

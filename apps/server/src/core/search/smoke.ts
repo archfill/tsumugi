@@ -1,6 +1,6 @@
 /**
  * Hybrid search smoke test.
- * Run: pnpm exec tsx src/search/smoke.ts
+ * Run: pnpm exec tsx src/core/search/smoke.ts
  *
  * Prerequisites:
  *   - tsumugi-postgres container running (docker compose up -d postgres)
@@ -10,9 +10,9 @@
 
 import process from "node:process";
 import { sql } from "drizzle-orm";
-import { db } from "../db/client.js";
-import { newId } from "../db/id.js";
-import { hybridSearch } from "./index.js";
+import { db } from "../../data/client.js";
+import { newId } from "../../lib/id.js";
+import { hybridSearch } from "./hybrid.js";
 
 // ---------------------------------------------------------------------------
 // Test fixtures

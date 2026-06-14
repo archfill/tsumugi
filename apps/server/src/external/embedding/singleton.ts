@@ -1,4 +1,4 @@
-import { type Embedder, createBgeEmbedder } from "./index.js";
+import { type Embedder, createBgeEmbedder } from "./bge.js";
 
 let instance: Embedder | null = null;
 

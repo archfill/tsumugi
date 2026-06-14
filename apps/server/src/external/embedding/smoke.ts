@@ -1,9 +1,9 @@
 /**
  * Smoke test for BGE-M3 embedding.
- * Run: pnpm exec tsx src/embedding/smoke.ts
+ * Run: pnpm exec tsx src/external/embedding/smoke.ts
  */
 import process from "node:process";
-import { createBgeEmbedder } from "./index.js";
+import { createBgeEmbedder } from "./bge.js";
 
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0;

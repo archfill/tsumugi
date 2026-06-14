@@ -9,11 +9,11 @@
  * memories do NOT have source / session_id / project_tag columns, so those
  * filters are honoured only for observations. If such a filter is supplied
  * and layer = 'memory', the caller is expected to skip this function entirely
- * (see hybridSearch in index.ts).
+ * (see hybridSearch in hybrid.ts).
  */
 
 import { sql } from "drizzle-orm";
-import { db } from "../db/client.js";
+import { db } from "../../data/client.js";
 import type { SearchInput } from "@tsumugi/shared";
 
 export interface BigmHit {

@@ -1,6 +1,6 @@
-import { loadConfig } from "./config.js";
-import { startStdio } from "./mcp/transport-stdio.js";
-import { startHttp } from "./mcp/transport-http.js";
+import { loadConfig } from "./lib/config.js";
+import { startStdio } from "./interfaces/mcp/transport-stdio.js";
+import { startHttp } from "./interfaces/mcp/transport-http.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();

@@ -4,7 +4,7 @@ import type { HttpBindings } from "@hono/node-server";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createMcpServer } from "./server.js";
-import { restApp } from "../api/rest.js";
+import { restApp } from "../rest/routes.js";
 
 type Env = { Bindings: HttpBindings };
 
