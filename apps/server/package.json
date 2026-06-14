@@ -21,7 +21,9 @@
     "db:studio": "drizzle-kit studio",
     "search:smoke": "tsx src/core/search/smoke.ts",
     "mcp:smoke": "tsx src/interfaces/mcp/smoke.ts",
-    "llm:smoke": "tsx src/external/llm/smoke.ts"
+    "llm:smoke": "tsx src/external/llm/smoke.ts",
+    "summarize:smoke": "tsx src/core/observation/summarize.smoke.ts",
+    "audn:smoke": "tsx src/core/dreaming/audn.smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

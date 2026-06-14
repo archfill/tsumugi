@@ -2,6 +2,11 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "../client.js";
 import { observations } from "../schema.js";
 
+export interface ObservationFactsPatch {
+  facts?: string[];
+  metadata?: Record<string, unknown>;
+}
+
 export type ObservationRow = typeof observations.$inferSelect;
 export type NewObservationRow = typeof observations.$inferInsert;
 
@@ -39,5 +44,21 @@ export const observationRepo = {
       .where(eq(observations.session_id, sessionId))
       .orderBy(desc(observations.created_at))
       .limit(limit);
+  },
+  async updateFactsAndMetadata(
+    id: string,
+    patch: ObservationFactsPatch,
+  ): Promise<void> {
+    await db
+      .update(observations)
+      .set({
+        ...(patch.facts !== undefined
+          ? { facts: patch.facts as unknown as never }
+          : {}),
+        ...(patch.metadata !== undefined
+          ? { metadata: patch.metadata as unknown as never }
+          : {}),
+      })
+      .where(eq(observations.id, id));
   },
 };

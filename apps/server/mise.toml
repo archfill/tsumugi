@@ -61,3 +61,11 @@ run = "pnpm mcp:smoke"
 [tasks.llm-smoke]
 description = "Run LLM client smoke test (requires LLM_LOW_API_KEY)"
 run = "pnpm llm:smoke"
+
+[tasks.summarize-smoke]
+description = "Run observation summarize smoke test (requires LLM_LOW_API_KEY)"
+run = "pnpm summarize:smoke"
+
+[tasks.audn-smoke]
+description = "Run AUDN judge smoke test (requires DATABASE_URL + LLM_MID_API_KEY)"
+run = "pnpm audn:smoke"
