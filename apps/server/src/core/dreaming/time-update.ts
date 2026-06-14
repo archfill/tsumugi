@@ -47,19 +47,25 @@ function isLlmRewriteResponse(v: unknown): v is LlmRewriteResponse {
 // Prompts
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `あなたは Time-Aware Memory Updater。記憶が古くなったため、現在の視点から
-narrative を書き直してください。
+const SYSTEM_PROMPT = `You are the Time-Aware Memory Updater.
+The memory has aged. Rewrite the narrative from the present-day perspective so
+that a future reader knows it describes the past.
 
-書き直しガイドライン:
-- 「過去」であることが分かる表現を追加 (「以前」「当時」「半年前」など)
-- 事実は捏造しない
-- 既に古くなった可能性がある情報は「だった」「採用していた」など過去形
-- 短くまとめる (1-2 文)
+## Rewrite guidelines
+- Insert past-tense framing ("previously", "at the time", "X months ago", ...)
+- Do not invent facts that were not in the original
+- Convert information that is likely stale into past tense
+  ("was using X", "adopted X at the time")
+- Keep it short (1-2 sentences)
 
-出力 JSON:
+## Output language
+Rewrite in the same natural language as the original narrative. Preserve code
+symbols / identifiers / English product names verbatim.
+
+## Output JSON
 {
-  "narrative": "時間考慮で書き直した narrative",
-  "reasoning": "簡潔に"
+  "narrative": "time-aware rewritten narrative",
+  "reasoning": "short rationale"
 }`;
 
 function buildUserPrompt(
@@ -67,11 +73,11 @@ function buildUserPrompt(
   elapsedD: number,
   createdAt: Date,
 ): string {
-  return `元 narrative: ${narrative}
-経過日数: ${Math.floor(elapsedD)} 日
-作成日: ${createdAt.toISOString().slice(0, 10)}
+  return `Original narrative: ${narrative}
+Elapsed days: ${Math.floor(elapsedD)}
+Created at: ${createdAt.toISOString().slice(0, 10)}
 
-書き直してください。`;
+Rewrite it.`;
 }
 
 // ---------------------------------------------------------------------------

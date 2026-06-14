@@ -36,22 +36,27 @@ export interface DetectDecisionContradictionsOptions {
 // LLM prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `あなたは Decision Contradiction Detector。
-複数の decision を比較し、明確に「主題が同じで、後者が前者を上書きしている」ペアを検出してください。
+const SYSTEM_PROMPT = `You are the Decision Contradiction Detector.
+Compare multiple decisions and detect pairs where the later decision clearly
+supersedes an earlier one on the same subject.
 
-判定の慎重さ:
-- 主題が異なる → 上書きではない
-- 補足・追加情報 → 上書きではない (前者を残す)
-- 同一主題で内容が明確に変わっている → 上書き
+## Be conservative
+- Different subjects                                → not a supersede
+- Supplementary or additive information             → not a supersede (keep both)
+- Same subject AND content has clearly changed       → supersede
 
-出力 JSON:
+## Output language
+Write reasoning in the same natural language as the inputs. Preserve code
+symbols / identifiers / English product names verbatim.
+
+## Output JSON
 {
   "pairs": [
     { "superseded_index": number, "new_index": number, "reasoning": string }
   ]
 }
 
-pairs が空でも valid (上書き関係なしの場合)。`;
+An empty pairs array is valid (no supersede relationships).`;
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -142,14 +147,14 @@ export async function detectDecisionContradictions(
 
     // 3. Build user prompt and call MID-tier LLM.
     const userPrompt =
-      `in_progress な decision 一覧:\n` +
+      `in_progress decisions:\n` +
       decisions
         .map(
           (d, i) =>
             `[${i}] (${d.created_at.toISOString().slice(0, 10)}) ${d.content}`,
         )
         .join("\n") +
-      "\n\n上書きペアを検出してください。";
+      "\n\nDetect supersede pairs.";
 
     const llm = getLlm("mid");
 

@@ -35,16 +35,23 @@ export interface ReflectionResult {
 // LLM prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `あなたは Session Reflector。一つのセッション内の観測群から、
-次回以降のセッションで再利用できる教訓・反省・成功パターンを抽出してください。
+const SYSTEM_PROMPT = `You are the Session Reflector.
+From a single session's observations, extract lessons, patterns, and unresolved
+issues that the agent can reuse in future sessions.
 
-抽出方針:
-- 失敗とその原因 → "lesson" タイプ
-- うまくいったパターン → "pattern" タイプ
-- 未解決の課題 → "open_issue" タイプ
-- 1 件 1-2 文、独立して理解できる粒度
+## Categories
+- "lesson"      — failure and its root cause
+- "pattern"     — something that worked, worth repeating
+- "open_issue"  — unresolved problem to revisit later
 
-出力 JSON:
+Each reflection is 1-2 sentences, self-contained.
+
+## Output language
+Write content, summary, and reasoning in the same natural language as the
+observations. Preserve code symbols / identifiers / English product names
+verbatim.
+
+## Output JSON
 {
   "reflections": [
     { "type": "lesson" | "pattern" | "open_issue", "content": string, "importance": number }
@@ -53,7 +60,7 @@ const SYSTEM_PROMPT = `あなたは Session Reflector。一つのセッション
   "reasoning": string
 }
 
-reflections は 0-5 件。情報量がなければ空配列。`;
+reflections is 0–5 entries. Return an empty array when there is no signal.`;
 
 // ---------------------------------------------------------------------------
 // LLM response types and validation
@@ -192,11 +199,11 @@ export async function reflectOnSession(input: {
 
     // 3. Build prompt and call LLM.
     const userPrompt =
-      `セッション ${sessionId} の観測群:\n\n` +
+      `Observations from session ${sessionId}:\n\n` +
       observations
         .map((o, i) => `[${i}] (${o.type}) ${o.content}`)
         .join("\n\n") +
-      "\n\n教訓と pattern を抽出してください。";
+      "\n\nExtract lessons and patterns.";
 
     const llm = getLlm("low");
     const embedder = getEmbedder();

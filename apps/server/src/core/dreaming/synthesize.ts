@@ -44,14 +44,19 @@ export interface SynthesizeOptions {
 // LLM prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `あなたは Cross-Session Synthesizer。同主題の memory narrative 群を、
-保持すべき事実を漏らさずに 1-3 文に統合し、再パッケージしてください。
+const SYSTEM_PROMPT = `You are the Cross-Session Synthesizer.
+Re-package a cluster of same-subject memory narratives into a single, concise
+1-3 sentence narrative. Lose no fact that the cluster preserved.
 
-出力 JSON:
+## Output language
+Write narrative and reasoning in the same natural language as the inputs.
+Preserve code symbols / identifiers / English product names verbatim.
+
+## Output JSON
 {
-  "narrative": "統合された 1-3 文",
-  "importance": <0-10 の数値>,
-  "reasoning": "簡潔に"
+  "narrative": "merged 1-3 sentence narrative",
+  "importance": <number between 0 and 10>,
+  "reasoning": "short rationale"
 }`;
 
 // ---------------------------------------------------------------------------
@@ -195,9 +200,9 @@ export async function synthesizeMemories(
     for (const cluster of clustersToProcess) {
       try {
         // 4a. Build user prompt.
-        const userPrompt = `統合対象 (同主題のクラスタ):\n${cluster
+        const userPrompt = `Cluster to merge (same-subject memories):\n${cluster
           .map((m, i) => `[${i}] (importance=${m.importance}) ${m.narrative}`)
-          .join("\n")}\n\nこれらを統合した 1 つの narrative を返してください。`;
+          .join("\n")}\n\nReturn a single merged narrative.`;
 
         // 4b. Call LOW-tier LLM.
         const raw = await llm.completeJson<unknown>({
