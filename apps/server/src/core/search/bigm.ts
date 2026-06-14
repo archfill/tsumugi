@@ -3,8 +3,11 @@
  *
  * Uses:
  *   - `LIKE likequery($q)` as a rough pre-filter (uses GIN bigm index)
- *   - `bigm_similarity($q, content)` as the score
- *   - observations.content  / memories.narrative as the text column
+ *   - `bigm_similarity($q, search_text)` as the score
+ *   - observations.search_text (generated: content + facts) / memories.narrative
+ *
+ * observations.search_text を対象にすることで、コードシンボル等が facts[]
+ * にしか含まれない場合でも bigm でヒットさせる (excerpt は content から作る)。
  *
  * memories do NOT have source / session_id / project_tag columns, so those
  * filters are honoured only for observations. If such a filter is supplied
@@ -59,8 +62,9 @@ async function bigmObservations(params: {
   const { query, limit, filter } = params;
 
   // Build dynamic WHERE clauses.  We use sql`` fragments and concatenate.
-  // The base conditions: content must match likequery.
-  let whereSql = sql`content LIKE likequery(${query})`;
+  // The base condition uses search_text (= content + facts) so that
+  // identifiers stored only in facts[] still match via bigm GIN index.
+  let whereSql = sql`search_text LIKE likequery(${query})`;
 
   if (filter?.type) {
     whereSql = sql`${whereSql} AND type = ${filter.type}`;
@@ -78,11 +82,11 @@ async function bigmObservations(params: {
   const result = await db.execute<BigmRow>(sql`
     SELECT
       id,
-      bigm_similarity(${query}, content) AS score,
+      bigm_similarity(${query}, search_text) AS score,
       content
     FROM observations
     WHERE ${whereSql}
-    ORDER BY bigm_similarity(${query}, content) DESC
+    ORDER BY bigm_similarity(${query}, search_text) DESC
     LIMIT ${limit}
   `);
 

@@ -32,6 +32,8 @@ function fakeObs(overrides: Partial<ObservationRow>): ObservationRow {
     embedding: null,
     created_at: new Date(),
     promoted_at: null,
+    // generated column on the DB side; mirror that here for type completeness
+    search_text: overrides.content ?? "",
     ...overrides,
   };
 }

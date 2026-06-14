@@ -7,6 +7,7 @@
  * links                — provenance edges between any layer entities
  */
 
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -41,6 +42,13 @@ export const observations = pgTable("observations", {
     .defaultNow(),
   /** NULL = not yet promoted to Layer 2 by the dreaming worker */
   promoted_at: timestamp("promoted_at", { withTimezone: true }),
+  /**
+   * pg_bigm 検索用の生成列。content と facts を結合し、コードシンボル等が
+   * facts[] にしかない場合でも bigram マッチでヒットさせる。
+   */
+  search_text: text("search_text")
+    .notNull()
+    .generatedAlwaysAs(sql`("content" || ' ' || coalesce("facts"::text, ''))`),
 });
 
 export type Observation = typeof observations.$inferSelect;
