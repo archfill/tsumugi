@@ -1,0 +1,1 @@
+ALTER TABLE "observations" ADD COLUMN "promoted_at" timestamp with time zone;

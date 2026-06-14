@@ -15,6 +15,9 @@ export const linkRepo = {
   async listTo(toId: string): Promise<LinkRow[]> {
     return await db.select().from(links).where(eq(links.to_id, toId));
   },
+  async listRecent(limit = 500): Promise<LinkRow[]> {
+    return await db.select().from(links).limit(limit);
+  },
   async remove(fromId: string, toId: string, relation: string): Promise<void> {
     await db
       .delete(links)

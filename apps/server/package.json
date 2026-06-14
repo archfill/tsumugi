@@ -19,6 +19,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
+    "db:smoke": "tsx src/data/smoke.ts",
     "search:smoke": "tsx src/core/search/smoke.ts",
     "mcp:smoke": "tsx src/interfaces/mcp/smoke.ts",
     "llm:smoke": "tsx src/external/llm/smoke.ts",

@@ -31,6 +31,7 @@ function fakeObs(overrides: Partial<ObservationRow>): ObservationRow {
     metadata: null,
     embedding: null,
     created_at: new Date(),
+    promoted_at: null,
     ...overrides,
   };
 }

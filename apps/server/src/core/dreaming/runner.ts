@@ -75,9 +75,11 @@ async function stepPromoteObservations(
       try {
         const summary = await summarizeObservation(observation);
         if (summary.skip) {
+          await observationRepo.markPromoted(observation.id);
           skipped++;
           continue;
         }
+        let hasAudnError = false;
         // Call AUDN judge for each fact extracted from this observation.
         for (const fact of summary.facts) {
           try {
@@ -86,10 +88,15 @@ async function stepPromoteObservations(
               sourceObservationId: observation.id,
             });
           } catch (err) {
+            hasAudnError = true;
             const msg = err instanceof Error ? err.message : String(err);
             errors.push(`audn(obs=${observation.id}): ${msg}`);
           }
         }
+        if (hasAudnError) {
+          continue;
+        }
+        await observationRepo.markPromoted(observation.id);
         promoted++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

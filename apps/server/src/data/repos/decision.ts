@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { decisions } from "../schema.js";
 
@@ -22,6 +22,13 @@ export const decisionRepo = {
       .select()
       .from(decisions)
       .where(eq(decisions.status, status))
+      .limit(limit);
+  },
+  async listRecent(limit = 200): Promise<DecisionRow[]> {
+    return await db
+      .select()
+      .from(decisions)
+      .orderBy(desc(decisions.created_at))
       .limit(limit);
   },
   async update(id: string, patch: Partial<NewDecisionRow>): Promise<void> {
