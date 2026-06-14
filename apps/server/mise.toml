@@ -37,3 +37,23 @@ run = "pnpm db:studio"
 [tasks.search-smoke]
 description = "Run hybrid search smoke test"
 run = "pnpm search:smoke"
+
+[tasks.dev-http]
+description = "Run MCP server in HTTP/SSE mode (dev)"
+run = "pnpm dev:http"
+
+[tasks.dev-stdio]
+description = "Run MCP server in stdio mode (dev)"
+run = "pnpm dev:stdio"
+
+[tasks.start-http]
+description = "Run built MCP server in HTTP/SSE mode"
+run = "pnpm start:http"
+
+[tasks.start-stdio]
+description = "Run built MCP server in stdio mode"
+run = "pnpm start:stdio"
+
+[tasks.mcp-smoke]
+description = "Run MCP tools smoke test (requires DB)"
+run = "pnpm mcp:smoke"

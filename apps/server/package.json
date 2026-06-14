@@ -5,9 +5,13 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/index.ts --http",
+    "dev:http": "tsx watch src/index.ts --http",
+    "dev:stdio": "tsx watch src/index.ts --stdio",
     "build": "tsc -b",
     "start": "node dist/index.js",
+    "start:http": "node dist/index.js --http",
+    "start:stdio": "node dist/index.js --stdio",
     "lint": "echo 'lint: not configured yet'",
     "typecheck": "tsc -b",
     "test": "echo 'no tests yet'",
@@ -15,9 +19,11 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "search:smoke": "tsx src/search/smoke.ts"
+    "search:smoke": "tsx src/search/smoke.ts",
+    "mcp:smoke": "tsx src/mcp/smoke.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@tsumugi/shared": "workspace:*",
     "@xenova/transformers": "^2.17.2",

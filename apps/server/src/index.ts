@@ -1,15 +1,17 @@
-// Tsumugi MCP server entrypoint (placeholder)
-// Wires up:
-//   - MCP server (HTTP/SSE + stdio modes)  → ./mcp
-//   - Admin REST API for UI               → ./api
-//   - Postgres connection                  → ./db
-//   - Embedding (BGE-M3 via xenova)        → ./embedding
-//   - Dreaming worker (cron / on-demand)   → ./dreaming
-//
-// Implementation comes in Phase 1.
+import { loadConfig } from "./config.js";
+import { startStdio } from "./mcp/transport-stdio.js";
+import { startHttp } from "./mcp/transport-http.js";
 
-function main(): void {
-  throw new Error("tsumugi server is not implemented yet");
+async function main(): Promise<void> {
+  const config = loadConfig();
+  if (config.mode === "stdio") {
+    await startStdio();
+  } else {
+    await startHttp(config.port);
+  }
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
