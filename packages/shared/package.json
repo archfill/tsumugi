@@ -13,14 +13,14 @@
   "scripts": {
     "build": "tsc -b",
     "lint": "echo 'lint: not configured yet'",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b",
     "test": "echo 'no tests yet'",
     "check": "pnpm typecheck"
   },
   "dependencies": {
-    "zod": "^3.24.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^6.0.3"
   }
 }

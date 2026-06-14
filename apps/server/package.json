@@ -9,24 +9,24 @@
     "build": "tsc -b",
     "start": "node dist/index.js",
     "lint": "echo 'lint: not configured yet'",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b",
     "test": "echo 'no tests yet'",
     "check": "pnpm typecheck"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@tsumugi/shared": "workspace:*",
-    "@xenova/transformers": "^2.17.0",
-    "drizzle-orm": "^0.36.0",
-    "hono": "^4.6.0",
-    "pg": "^8.13.0",
-    "zod": "^3.24.0"
+    "@xenova/transformers": "^2.17.2",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.25",
+    "pg": "^8.21.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/pg": "^8.11.0",
-    "drizzle-kit": "^0.28.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.9.0"
+    "@types/node": "^25.9.3",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
   }
 }

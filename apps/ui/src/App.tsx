@@ -1,4 +1,4 @@
-export default function App(): JSX.Element {
+export default function App() {
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 p-8">
       <h1 className="text-2xl font-semibold">紬 (Tsumugi)</h1>

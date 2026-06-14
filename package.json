@@ -8,7 +8,7 @@
   "type": "module",
   "engines": {
     "node": ">=22.0.0",
-    "pnpm": ">=10.0.0"
+    "pnpm": ">=11.0.0"
   },
   "scripts": {
     "dev:server": "pnpm --filter @tsumugi/server dev",
@@ -20,6 +20,6 @@
     "check": "pnpm -r check"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^6.0.3"
   }
 }

@@ -20,7 +20,7 @@ export const ObservationInput = z.object({
   session_id: z.string().optional(),
   project_tag: z.string().optional(),
   facts: z.array(z.string()).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type ObservationInput = z.infer<typeof ObservationInput>;
 
