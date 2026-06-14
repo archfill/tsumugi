@@ -5,7 +5,18 @@ import { randomUUID } from "node:crypto";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "./server.js";
 import { restApp } from "../rest/routes.js";
+import { loadConfig } from "../../lib/config.js";
 import { logger } from "../../lib/logger.js";
+import {
+  startScheduler,
+  type SchedulerHandle,
+} from "../../core/dreaming/scheduler.js";
+
+let activeScheduler: SchedulerHandle | null = null;
+
+export function getActiveScheduler(): SchedulerHandle | null {
+  return activeScheduler;
+}
 
 type Env = { Bindings: HttpBindings };
 type StreamableTransport = WebStandardStreamableHTTPServerTransport;
@@ -61,4 +72,8 @@ export async function startHttp(port: number): Promise<void> {
 
   serve({ fetch: app.fetch, port });
   logger.info({ port, mode: "http" }, "tsumugi http server listening");
+
+  // Start dreaming scheduler (http mode only; stdio is short-lived).
+  const config = loadConfig();
+  activeScheduler = startScheduler(config.scheduler);
 }

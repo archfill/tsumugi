@@ -15,6 +15,18 @@ export interface LlmTierConfig {
   fallback?: LlmModelConfig;
 }
 
+/**
+ * Dreaming scheduler の cron 設定。
+ * 空文字列で当該 job を無効化。
+ */
+export interface SchedulerConfig {
+  enabled: boolean;
+  promote: string; // promote-observations
+  synthesize: string;
+  timeUpdate: string;
+  decisionContradiction: string;
+}
+
 export interface Config {
   databaseUrl: string;
   port: number;
@@ -24,6 +36,7 @@ export interface Config {
     low: LlmTierConfig;
     mid: LlmTierConfig;
   };
+  scheduler: SchedulerConfig;
 }
 
 function parseProvider(
@@ -98,6 +111,14 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
     llm: {
       low: loadTier("low"),
       mid: loadTier("mid"),
+    },
+    scheduler: {
+      enabled: process.env["DREAMING_SCHEDULER_ENABLED"] !== "false",
+      promote: process.env["DREAMING_SCHEDULE_PROMOTE"] ?? "*/30 * * * *",
+      synthesize: process.env["DREAMING_SCHEDULE_SYNTHESIZE"] ?? "0 */6 * * *",
+      timeUpdate: process.env["DREAMING_SCHEDULE_TIME_UPDATE"] ?? "0 3 * * *",
+      decisionContradiction:
+        process.env["DREAMING_SCHEDULE_DECISION_CONTRADICTION"] ?? "0 4 * * 0",
     },
   };
 }
