@@ -27,6 +27,17 @@ export interface TimeUpdateResult {
   errors: string[];
 }
 
+export interface TimeUpdateInput {
+  narrative: string;
+  createdAtIso: string;
+  nowIso?: string;
+}
+
+export interface TimeUpdateOnlyResult {
+  narrative: string;
+  reasoning: string;
+}
+
 // ---------------------------------------------------------------------------
 // Internal LLM response shape
 // ---------------------------------------------------------------------------
@@ -73,10 +84,12 @@ function buildUserPrompt(
   narrative: string,
   elapsedD: number,
   createdAt: Date,
+  now: Date,
 ): string {
   return `Original narrative: ${narrative}
 Elapsed days: ${Math.floor(elapsedD)}
 Created at: ${createdAt.toISOString().slice(0, 10)}
+Current date: ${now.toISOString().slice(0, 10)}
 
 Rewrite it.`;
 }
@@ -85,8 +98,8 @@ Rewrite it.`;
 // Helpers
 // ---------------------------------------------------------------------------
 
-function elapsedDays(createdAt: Date): number {
-  const ms = Date.now() - createdAt.getTime();
+function elapsedDays(createdAt: Date, now = new Date()): number {
+  const ms = now.getTime() - createdAt.getTime();
   return ms / (1000 * 60 * 60 * 24);
 }
 
@@ -124,6 +137,38 @@ function applyAging(
 // ---------------------------------------------------------------------------
 
 /**
+ * Pure LLM rewrite step for time-aware memory updates. This does not read or
+ * write DB state; callers provide the narrative and timestamps explicitly.
+ */
+export async function timeUpdateOnly(
+  input: TimeUpdateInput,
+): Promise<TimeUpdateOnlyResult> {
+  const createdAt = new Date(input.createdAtIso);
+  const now = input.nowIso ? new Date(input.nowIso) : new Date();
+  const elapsed = elapsedDays(createdAt, now);
+  const llm = getLlm("low");
+
+  const raw = await llm.completeJson<unknown>({
+    system: SYSTEM_PROMPT,
+    user: buildUserPrompt(input.narrative, elapsed, createdAt, now),
+    jsonResponse: true,
+    temperature: 0.3,
+    maxTokens: 512,
+  });
+
+  if (!isLlmRewriteResponse(raw)) {
+    throw new ExternalError(
+      `time-update LLM returned unexpected shape: ${JSON.stringify(raw)}`,
+    );
+  }
+
+  return {
+    narrative: raw.narrative.trim(),
+    reasoning: raw.reasoning.trim(),
+  };
+}
+
+/**
  * Scan active memories, rewrite aged narratives with a LOW-tier LLM,
  * and decay importance scores based on elapsed time.
  *
@@ -159,7 +204,6 @@ export async function timeAwareMemoryUpdate(opts?: {
     // Update input_count now that we know it.
     await dreamingRunRepo.update(runId, { input_count: scanned });
 
-    const llm = getLlm("low");
     const embedder = getEmbedder();
 
     for (const memory of memories) {
@@ -177,21 +221,10 @@ export async function timeAwareMemoryUpdate(opts?: {
 
       try {
         // 3. Rewrite narrative via LLM.
-        const raw = await llm.completeJson<unknown>({
-          system: SYSTEM_PROMPT,
-          user: buildUserPrompt(memory.narrative, elapsed, createdAt),
-          jsonResponse: true,
-          temperature: 0.3,
-          maxTokens: 512,
+        const { narrative: newNarrative } = await timeUpdateOnly({
+          narrative: memory.narrative,
+          createdAtIso: createdAt.toISOString(),
         });
-
-        if (!isLlmRewriteResponse(raw)) {
-          throw new ExternalError(
-            `time-update LLM returned unexpected shape: ${JSON.stringify(raw)}`,
-          );
-        }
-
-        const newNarrative = raw.narrative.trim();
 
         // 4. Re-embed with updated narrative.
         const embedding = Array.from(await embedder.embed(newNarrative));

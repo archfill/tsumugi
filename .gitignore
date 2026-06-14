@@ -45,3 +45,7 @@ logs/
 # Misc
 *.tgz
 .turbo/
+
+# Eval (private fixtures derived from yui internal data, bench output artifacts)
+apps/server/eval/fixtures-private/
+apps/server/eval/results/

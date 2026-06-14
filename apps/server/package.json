@@ -14,7 +14,8 @@
     "start:stdio": "node dist/index.js --stdio",
     "lint": "echo 'lint: not configured yet'",
     "typecheck": "tsc -b",
-    "test": "echo 'no tests yet'",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "check": "pnpm typecheck",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -34,7 +35,14 @@
     "dream:time-update": "tsx src/core/dreaming/cli.ts time-update",
     "dream:decision": "tsx src/core/dreaming/cli.ts decision-contradiction",
     "dream:full": "tsx src/core/dreaming/cli.ts full",
-    "dreaming:smoke": "tsx src/core/dreaming/runner.smoke.ts"
+    "dreaming:smoke": "tsx src/core/dreaming/runner.smoke.ts",
+    "bench": "tsx --env-file=../../.env eval/cli.ts",
+    "bench:audn": "tsx --env-file=../../.env eval/cli.ts audn",
+    "bench:promote": "tsx --env-file=../../.env eval/cli.ts promote",
+    "bench:search": "tsx --env-file=../../.env eval/cli.ts search",
+    "bench:contradiction": "tsx --env-file=../../.env eval/cli.ts contradiction",
+    "bench:time-update": "tsx --env-file=../../.env eval/cli.ts time-update",
+    "eval:seed": "tsx --env-file=../../.env eval/seed-from-yui.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
@@ -53,9 +61,11 @@
     "@types/node": "^25.9.3",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.20.0",
+    "@vitest/coverage-v8": "^3.2.0",
     "drizzle-kit": "^0.31.10",
     "pino-pretty": "^13.1.3",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.0"
   }
 }
