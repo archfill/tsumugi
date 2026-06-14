@@ -44,6 +44,15 @@ services:
       DATABASE_URL: postgresql://tsumugi:${TSUMUGI_PG_PASSWORD:-tsumugi_dev}@tsumugi-postgres:5432/tsumugi
       NODE_ENV: production
       HF_CACHE: /app/.cache/huggingface
+      # LLM provider 設定 (1Password tsumugi-dev env から流入)
+      LLM_LOW_PROVIDER: ${LLM_LOW_PROVIDER:-openai-compat}
+      LLM_LOW_API_KEY: ${LLM_LOW_API_KEY:-}
+      LLM_LOW_MODEL: ${LLM_LOW_MODEL:-glm-4.5-air}
+      LLM_LOW_BASE_URL: ${LLM_LOW_BASE_URL:-https://api.z.ai/api/paas/v4}
+      LLM_MID_PROVIDER: ${LLM_MID_PROVIDER:-openai-compat}
+      LLM_MID_API_KEY: ${LLM_MID_API_KEY:-}
+      LLM_MID_MODEL: ${LLM_MID_MODEL:-glm-4.6}
+      LLM_MID_BASE_URL: ${LLM_MID_BASE_URL:-https://api.z.ai/api/paas/v4}
     volumes:
       - tsumugi-hf-cache:/app/.cache/huggingface
     ports:
