@@ -60,8 +60,8 @@ const SYSTEM_PROMPT = `あなたは記憶層の差分判定担当 (AUDN: ADD/UPD
 出力 JSON:
 {
   "decision": "ADD" | "UPDATE" | "DELETE" | "NOOP",
-  "target_index": number | null,
-  "new_narrative": string,
+  "target_index": number | null,   // UPDATE/DELETE のとき指定、ADD/NOOP では null
+  "new_narrative": string | null,  // ADD/UPDATE のとき新しい narrative、DELETE/NOOP では null
   "reasoning": string
 }`;
 
@@ -72,7 +72,11 @@ const SYSTEM_PROMPT = `あなたは記憶層の差分判定担当 (AUDN: ADD/UPD
 interface LlmJudgement {
   decision: string;
   target_index: number | null;
-  new_narrative: string;
+  /**
+   * ADD/UPDATE のときに生成された新 narrative。
+   * DELETE/NOOP のときは LLM が null を返すのが自然なので許容する。
+   */
+  new_narrative: string | null;
   reasoning: string;
 }
 
@@ -82,7 +86,8 @@ function isLlmJudgement(v: unknown): v is LlmJudgement {
   return (
     typeof obj["decision"] === "string" &&
     (obj["target_index"] === null || typeof obj["target_index"] === "number") &&
-    typeof obj["new_narrative"] === "string" &&
+    (obj["new_narrative"] === null ||
+      typeof obj["new_narrative"] === "string") &&
     typeof obj["reasoning"] === "string"
   );
 }
