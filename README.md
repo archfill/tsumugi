@@ -2,6 +2,9 @@
 
 archfill 製の MCP ベース記憶レイヤー。観測・記憶・想起・dreaming を担う、自律エージェント向けメモリインフラ。
 
+> **Status: pre-1.0 / single-user / unverified in production.**
+> 本リポジトリは作者の個人プロジェクトとして開発中。長期運用・大規模負荷・複数ユーザ環境での検証は未実施。実運用での導入を推奨できる段階ではない。
+
 ## コンセプト
 
 - 記憶を「糸」として紡ぐメタファ — 観測（observation）を取り込み、整理・統合して記憶層に紡ぎ込む
@@ -50,9 +53,10 @@ tsumugi/
 | --------------- | -------------------------------------------------------------------- |
 | Backend         | TypeScript 6 / Node.js 22 / Hono / MCP TS SDK                        |
 | ORM             | Drizzle ORM + node-postgres                                          |
-| DB              | PostgreSQL 16 + pgvector + pg_bigm                                   |
+| DB              | PostgreSQL 18 + pgvector + pg_bigm                                   |
 | Embedding       | BGE-M3 via `@xenova/transformers`（ONNX）                            |
-| LLM             | AI SDK（cold path のみ、Claude 系を tier 別で利用）                  |
+| LLM             | provider 非依存（Anthropic / OpenAI 互換 / Z.ai / Ollama）、tier 別  |
+| Resilience      | 3 層 retry + per-item failure tracking + provider fallback           |
 | Frontend        | React 19 / Vite 8 / TailwindCSS 4 / shadcn / TanStack Router & Query |
 | Package manager | pnpm（workspace）                                                    |
 | Task runner     | mise                                                                 |
@@ -76,11 +80,13 @@ mise run typecheck            # 型チェックのみ
 
 ## LLM 用途と tier
 
-| tier      | タスク                                                                           | 想定モデル        |
-| --------- | -------------------------------------------------------------------------------- | ----------------- |
-| LOW       | session narrative / decision 要約 / cross-session synthesize / time-aware update | Claude Haiku 4.5  |
-| MID       | AUDN 判定 / decision 矛盾検出                                                    | Claude Sonnet 4.6 |
-| embedding | BGE-M3（ローカル ONNX）                                                          | —                 |
+| tier      | タスク                                                                           | 設定方法                         |
+| --------- | -------------------------------------------------------------------------------- | -------------------------------- |
+| LOW       | session narrative / decision 要約 / cross-session synthesize / time-aware update | `LLM_LOW_*` env で provider 指定 |
+| MID       | AUDN 判定 / decision 矛盾検出                                                    | `LLM_MID_*` env で provider 指定 |
+| embedding | BGE-M3（ローカル ONNX）                                                          | —                                |
+
+各 tier の primary が失敗したら `LLM_*_FALLBACK_*` で指定した provider に自動切替される。詳細は `.env.example` 参照。
 
 ## クライアント接続
 
@@ -94,7 +100,7 @@ mise run typecheck            # 型チェックのみ
 
 ## ステータス・ロードマップ
 
-> Phase 1〜3 で tsumugi が独立サービスとして稼働。Phase 4〜5 は内部利用システムの移行・既存実装の撤去で、Phase 6（任意）は claude-mem 系の置き換え。
+> Phase 1〜3 で tsumugi が独立サービスとして稼働。Phase 4〜5 は内部利用システムの移行・既存実装の撤去。Phase 6（任意）は既存 memory 系ツールの置き換え。
 
 ### Phase 0: 設計確定・scaffold（完了）
 
@@ -143,11 +149,30 @@ mise run typecheck            # 型チェックのみ
 
 > ── ここで「内部利用システムから memory が完全切り出し」 ──
 
-### Phase 6（任意）: claude-mem 系の置き換え
+### Phase 6（任意）: 既存 memory ツールの置き換え
 
-- 既存の claude-mem 設定を外す
+- 既存 memory 系ツールの設定を外す
 - 自動取得を tsumugi 側 hook に置換
+
+## 評価ベンチ
+
+各 dreaming ジョブと hybrid search を独立に検証するベンチ基盤を `apps/server/eval/` に同梱。
+
+```bash
+mise run -C apps/server bench           # 全 5 ベンチを順次実行
+mise run -C apps/server bench-audn      # 個別
+```
+
+- 合成 fixture (132 ケース) — 公開・再現可能
+- LLM resilience の vitest unit test (14 ケース)
+- 詳細と運用は [docs/adr/0009-eval-as-migration-validation.md](docs/adr/0009-eval-as-migration-validation.md) 参照
+
+これらは component 単体の正しさを測るもので、end-to-end QA benchmark (LoCoMo / LongMemEval 等) とは別軸。
+
+## セキュリティ
+
+脆弱性報告は [SECURITY.md](./SECURITY.md) を参照。
 
 ## ライセンス
 
-MIT
+Apache License 2.0. 詳細は [LICENSE](./LICENSE) を参照。

@@ -92,6 +92,73 @@ function isLlmContradictionResponse(v: unknown): v is LlmContradictionResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Pure detection (no DB side effects)
+// ---------------------------------------------------------------------------
+
+export interface DecisionForDetection {
+  /** ISO date string (YYYY-MM-DD) shown to the LLM. */
+  isoDate: string;
+  content: string;
+}
+
+export interface DetectedPair {
+  supersededIndex: number;
+  newIndex: number;
+  reasoning: string;
+}
+
+/**
+ * Pure LLM-based supersede detection — feeds a list of decisions to the MID
+ * tier LLM and returns the detected supersede pairs. No DB writes, no
+ * dreaming_run record. Used by `detectDecisionContradictions` (with DB-loaded
+ * decisions) and by evaluation benches (with fixture-provided decisions).
+ */
+export async function detectPairsOnly(
+  decisions: DecisionForDetection[],
+): Promise<DetectedPair[]> {
+  if (decisions.length <= 1) return [];
+
+  const userPrompt =
+    `in_progress decisions:\n` +
+    decisions.map((d, i) => `[${i}] (${d.isoDate}) ${d.content}`).join("\n") +
+    "\n\nDetect supersede pairs.";
+
+  const llm = getLlm("mid");
+
+  const raw = await llm.completeJson<unknown>({
+    system: SYSTEM_PROMPT,
+    user: userPrompt,
+    jsonResponse: true,
+    temperature: 0.0,
+  });
+
+  if (!isLlmContradictionResponse(raw)) {
+    throw new ExternalError(
+      `Decision contradiction LLM returned unexpected shape: ${JSON.stringify(raw)}`,
+    );
+  }
+
+  const pairs: DetectedPair[] = [];
+  for (const p of raw.pairs) {
+    if (
+      p.superseded_index < 0 ||
+      p.superseded_index >= decisions.length ||
+      p.new_index < 0 ||
+      p.new_index >= decisions.length ||
+      p.superseded_index === p.new_index
+    ) {
+      continue;
+    }
+    pairs.push({
+      supersededIndex: p.superseded_index,
+      newIndex: p.new_index,
+      reasoning: p.reasoning,
+    });
+  }
+  return pairs;
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 

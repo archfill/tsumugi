@@ -109,3 +109,31 @@ run = "pnpm dream:full"
 [tasks.dreaming-smoke]
 description = "Run dreaming runner smoke test (requires DATABASE_URL + LLM_LOW_API_KEY + LLM_MID_API_KEY)"
 run = "pnpm dreaming:smoke"
+
+[tasks.bench]
+description = "Run all evaluation benches (requires DATABASE_URL + LLM keys)"
+run = "pnpm bench"
+
+[tasks.bench-audn]
+description = "Run AUDN decision bench"
+run = "pnpm bench:audn"
+
+[tasks.eval-seed]
+description = "Extract yui DB data into eval/fixtures-private/ (requires YUI_DATABASE_URL)"
+run = "pnpm eval:seed"
+
+[tasks.bench-promote]
+description = "Run promote-skip bench"
+run = "pnpm bench:promote"
+
+[tasks.bench-search]
+description = "Run hybrid search bench (seeds + queries memories, requires DATABASE_URL)"
+run = "pnpm bench:search"
+
+[tasks.bench-contradiction]
+description = "Run decision contradiction bench (requires LLM_MID_API_KEY)"
+run = "pnpm bench:contradiction"
+
+[tasks.bench-time-update]
+description = "Run time-aware memory update bench (requires LLM_LOW_API_KEY)"
+run = "pnpm bench:time-update"

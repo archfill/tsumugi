@@ -5,6 +5,7 @@ import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { linkRepo } from "../../data/repos/link.js";
 import { memoryRepo } from "../../data/repos/memory.js";
 import { observationRepo } from "../../data/repos/observation.js";
+import { getActiveScheduler } from "../mcp/transport-http.js";
 
 export const restApp = new Hono();
 
@@ -72,4 +73,12 @@ restApp.get("/dreaming/runs", async (c) => {
   const limit = Number(c.req.query("limit") ?? 20);
   const runs = await dreamingRunRepo.listRecent(Math.min(limit, 100));
   return c.json({ runs });
+});
+
+restApp.get("/scheduler", (c) => {
+  const sched = getActiveScheduler();
+  return c.json({
+    enabled: sched !== null,
+    jobs: sched?.jobs ?? [],
+  });
 });

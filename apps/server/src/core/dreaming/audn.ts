@@ -15,6 +15,7 @@ import { memoryRepo } from "../../data/repos/memory.js";
 import { linkRepo } from "../../data/repos/link.js";
 import { newId } from "../../lib/id.js";
 import { ValidationError } from "../../lib/errors.js";
+import { logger } from "../../lib/logger.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -101,6 +102,82 @@ function isLlmJudgement(v: unknown): v is LlmJudgement {
 }
 
 // ---------------------------------------------------------------------------
+// Pure judgement (no DB side effects)
+// ---------------------------------------------------------------------------
+
+export interface JudgeOnlyInput {
+  newFact: string;
+  existingMemoryNarratives: string[];
+}
+
+export interface JudgeOnlyResult {
+  decision: AudnDecision;
+  targetIndex: number | null;
+  newNarrative: string | null;
+  reasoning: string;
+}
+
+/**
+ * Pure LLM judgement: take a new fact + list of existing memory narratives,
+ * return the AUDN decision without touching the database or search.
+ *
+ * Used by `audnJudge` (with search-retrieved memories) and by evaluation
+ * benches (with fixture-provided memories).
+ *
+ * Fast-path: empty memory list → ADD without LLM call.
+ */
+export async function judgeOnly(
+  input: JudgeOnlyInput,
+): Promise<JudgeOnlyResult> {
+  const { newFact, existingMemoryNarratives } = input;
+
+  if (existingMemoryNarratives.length === 0) {
+    return {
+      decision: "ADD",
+      targetIndex: null,
+      newNarrative: newFact,
+      reasoning: "No existing memories — straight ADD.",
+    };
+  }
+
+  const llm = getLlm("mid");
+
+  const userPrompt = `New fact:
+${newFact}
+
+Existing memories:
+${existingMemoryNarratives.map((n, i) => `[${i}] ${n}`).join("\n")}
+
+Decide which (if any) memory is the target, or whether to add a new one.`;
+
+  const raw = await llm.completeJson<unknown>({
+    system: SYSTEM_PROMPT,
+    user: userPrompt,
+    jsonResponse: true,
+    temperature: 0.0,
+  });
+
+  if (!isLlmJudgement(raw)) {
+    throw new ValidationError(
+      `AUDN LLM returned unexpected JSON shape: ${JSON.stringify(raw)}`,
+    );
+  }
+
+  const { decision, target_index, new_narrative, reasoning } = raw;
+
+  if (!["ADD", "UPDATE", "DELETE", "NOOP"].includes(decision)) {
+    throw new ValidationError(`AUDN: unknown decision value "${decision}"`);
+  }
+
+  return {
+    decision: decision as AudnDecision,
+    targetIndex: target_index,
+    newNarrative: new_narrative,
+    reasoning,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
@@ -133,38 +210,16 @@ export async function audnJudge(input: AudnJudgeInput): Promise<AudnResult> {
     return await addMemory(newFact, sourceObservationId);
   }
 
-  // 4. Call MID-tier LLM for judgement.
-  const llm = getLlm("mid");
-
-  const userPrompt = `New fact:
-${newFact}
-
-Existing memories:
-${existingMemories.map((m, i) => `[${i}] ${m.narrative}`).join("\n")}
-
-Decide which (if any) memory is the target, or whether to add a new one.`;
-
-  const raw = await llm.completeJson<unknown>({
-    system: SYSTEM_PROMPT,
-    user: userPrompt,
-    jsonResponse: true,
-    temperature: 0.0,
+  // 4. Call pure judgement (same LLM call path that bench exercises).
+  const judgement = await judgeOnly({
+    newFact,
+    existingMemoryNarratives: existingMemories.map((m) => m.narrative),
   });
 
-  if (!isLlmJudgement(raw)) {
-    throw new ValidationError(
-      `AUDN LLM returned unexpected JSON shape: ${JSON.stringify(raw)}`,
-    );
-  }
-
-  const { decision, target_index, new_narrative, reasoning } = raw;
-
-  // Validate decision value.
-  if (!["ADD", "UPDATE", "DELETE", "NOOP"].includes(decision)) {
-    throw new ValidationError(`AUDN: unknown decision value "${decision}"`);
-  }
-
-  const audnDecision = decision as AudnDecision;
+  const audnDecision = judgement.decision;
+  const target_index = judgement.targetIndex;
+  const new_narrative = judgement.newNarrative;
+  const reasoning = judgement.reasoning;
 
   // 5. Resolve target memory.
   let targetMemory =
@@ -175,8 +230,13 @@ Decide which (if any) memory is the target, or whether to add a new one.`;
     !targetMemory
   ) {
     // target_index out of range → fallback to NOOP.
-    console.warn(
-      `[audn] target_index=${target_index} out of range (${existingMemories.length} memories) — fallback NOOP`,
+    logger.warn(
+      {
+        targetIndex: target_index,
+        memoryCount: existingMemories.length,
+        sourceObservationId,
+      },
+      "AUDN target_index out of range, fallback to NOOP",
     );
     return { decision: "NOOP", reasoning };
   }

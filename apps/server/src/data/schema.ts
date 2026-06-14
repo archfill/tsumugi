@@ -73,6 +73,15 @@ export const memories = pgTable("memories", {
     .defaultNow(),
   /** NULL = active; non-NULL = archived (soft delete / forget) */
   archived_at: timestamp("archived_at", { withTimezone: true }),
+  /**
+   * LLM failure tracking (Layer 2 resilience).
+   * - llm_failure_count: 連続失敗回数。成功で 0 に reset。
+   * - last_llm_failure_at: 最後に LLM 操作 (time-update 等) が失敗した時刻。
+   * - llm_quarantined_at: 累積失敗が閾値超え → quarantine、以降 LLM 処理対象外。
+   */
+  llm_failure_count: integer("llm_failure_count").notNull().default(0),
+  last_llm_failure_at: timestamp("last_llm_failure_at", { withTimezone: true }),
+  llm_quarantined_at: timestamp("llm_quarantined_at", { withTimezone: true }),
 });
 
 export type Memory = typeof memories.$inferSelect;
