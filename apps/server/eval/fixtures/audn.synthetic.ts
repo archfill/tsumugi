@@ -260,4 +260,110 @@ export const fixtures: FixtureCase<AudnInput, AudnExpected>[] = [
     expected: { decision: "UPDATE", targetIndex: 0 },
     tags: ["ambiguous"],
   },
+  // -------------------- Additional coverage --------------------
+  {
+    id: "audn-add-07-jp-config-fact",
+    description: "新しい config 事実、既存と独立",
+    input: {
+      newFact: "PORT は 8000 で起動。",
+      existingMemoryNarratives: ["DB は PostgreSQL 18 を採用。"],
+    },
+    expected: { decision: "ADD", targetIndex: null },
+  },
+  {
+    id: "audn-add-08-en-tool-policy",
+    description: "Operational policy independent of existing memory",
+    input: {
+      newFact:
+        "All bench scripts must load credentials via --env-file, not inline.",
+      existingMemoryNarratives: ["Adopted Z.ai GLM Coding Plan."],
+    },
+    expected: { decision: "ADD", targetIndex: null },
+  },
+  {
+    id: "audn-update-07-en-rrf-k-change",
+    description: "Constant tuning is UPDATE",
+    input: {
+      newFact: "Changed the RRF fusion k constant from 60 to 40.",
+      existingMemoryNarratives: ["RRF fusion uses k = 60."],
+    },
+    expected: { decision: "UPDATE", targetIndex: 0 },
+  },
+  {
+    id: "audn-update-08-jp-prompt-tightening",
+    description: "Prompt 改修は UPDATE",
+    input: {
+      newFact:
+        "AUDN prompt に「subject continuity の例示」を追加して DELETE 誤検出を抑えた。",
+      existingMemoryNarratives: [
+        "AUDN judge は subject 継続性で ADD/UPDATE/DELETE/NOOP を判定する。",
+      ],
+    },
+    expected: { decision: "UPDATE", targetIndex: 0 },
+  },
+  {
+    id: "audn-delete-06-jp-removal-multi",
+    description: "他に同主題なし → DELETE 一意",
+    input: {
+      newFact: "ロガーから console.log を完全に撤去。",
+      existingMemoryNarratives: [
+        "logger は console.log を使う。",
+        "DB は PostgreSQL 18。",
+      ],
+    },
+    expected: { decision: "DELETE", targetIndex: 0 },
+  },
+  {
+    id: "audn-delete-07-en-discontinuation",
+    description: "External service discontinued",
+    input: {
+      newFact:
+        "The Layer 3 fallback for the LOW tier has been removed entirely.",
+      existingMemoryNarratives: [
+        "LOW tier provider fallback is configured to Anthropic Haiku.",
+      ],
+    },
+    expected: { decision: "DELETE", targetIndex: 0 },
+  },
+  {
+    id: "audn-delete-08-jp-feature-removal",
+    description: "機能撤去は DELETE",
+    input: {
+      newFact: "admin から手動 compaction 機能を完全削除した (不要のため)。",
+      existingMemoryNarratives: ["admin に手動 compaction 機能がある。"],
+    },
+    expected: { decision: "DELETE", targetIndex: 0 },
+  },
+  {
+    id: "audn-noop-05-en-exact-duplicate",
+    description: "Exact duplicate phrasing",
+    input: {
+      newFact: "Adopted Z.ai GLM Coding Plan.",
+      existingMemoryNarratives: ["Adopted Z.ai GLM Coding Plan."],
+    },
+    expected: { decision: "NOOP", targetIndex: null },
+  },
+  {
+    id: "audn-noop-06-jp-implied",
+    description: "既存に含意される事実",
+    input: {
+      newFact: "Z.ai を使用しているので API キーが必要。",
+      existingMemoryNarratives: [
+        "Z.ai GLM Coding Plan を採用 (subscription で API 料金は定額化)。",
+      ],
+    },
+    expected: { decision: "NOOP", targetIndex: null },
+  },
+  {
+    id: "audn-noop-07-en-explicit-equivalent",
+    description: "Explicit restatement matches existing memory",
+    input: {
+      newFact:
+        "Hybrid search uses Reciprocal Rank Fusion to combine pg_bigm and pgvector.",
+      existingMemoryNarratives: [
+        "Hybrid search combines pg_bigm and pgvector via RRF.",
+      ],
+    },
+    expected: { decision: "NOOP", targetIndex: null },
+  },
 ];

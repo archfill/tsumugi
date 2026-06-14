@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { like } from "drizzle-orm";
 import { db } from "../../src/data/client.js";
 import { memories } from "../../src/data/schema.js";
@@ -10,10 +13,27 @@ import {
   seedMemories,
   type SearchExpected,
   type SearchInput,
+  type SeedMemory,
 } from "../fixtures/search.synthetic.js";
 import { loadPrivateFixtures } from "../load-private.js";
 import { runBench } from "../runner.js";
 import type { BenchSummary } from "../types.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PRIVATE_SEARCH = join(
+  HERE,
+  "..",
+  "fixtures-private",
+  "search.private.ts",
+);
+
+async function loadPrivateSeeds(): Promise<SeedMemory[]> {
+  if (!existsSync(PRIVATE_SEARCH)) return [];
+  const mod = (await import(pathToFileURL(PRIVATE_SEARCH).href)) as {
+    seedMemories?: SeedMemory[];
+  };
+  return mod.seedMemories ?? [];
+}
 
 interface SearchActual {
   hitIds: string[];
@@ -29,9 +49,9 @@ async function wipeSeedMemories(): Promise<number> {
   return result.rowCount ?? 0;
 }
 
-async function seedSearchMemories(): Promise<void> {
+async function seedSearchMemories(all: SeedMemory[]): Promise<void> {
   const embedder = getEmbedder();
-  for (const m of seedMemories) {
+  for (const m of all) {
     const embedding = Array.from(await embedder.embed(m.narrative));
     await memoryRepo.insert({
       id: m.id,
@@ -51,8 +71,13 @@ export async function runSearchBench(): Promise<BenchSummary> {
       "search bench: cleaned up leftover seed memories before seeding",
     );
   }
-  await seedSearchMemories();
-  logger.info({ count: seedMemories.length }, "search bench: seeded memories");
+  const privateSeeds = await loadPrivateSeeds();
+  const allSeeds = [...seedMemories, ...privateSeeds];
+  await seedSearchMemories(allSeeds);
+  logger.info(
+    { synthetic: seedMemories.length, private: privateSeeds.length },
+    "search bench: seeded memories",
+  );
 
   const privateFixtures = await loadPrivateFixtures<
     SearchInput,
