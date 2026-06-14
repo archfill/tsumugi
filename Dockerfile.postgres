@@ -1,0 +1,33 @@
+# Custom PostgreSQL image: pgvector/pgvector:pg18 + pg_bigm 1.2-20250903
+#
+# pg_bigm has no apt package in PGDG (true for any PG version), so we always
+# source-build from the upstream GitHub release tarball.
+# v1.2-20250903 is the first pg_bigm release with official PostgreSQL 18+ support.
+#
+# Build method: source build via USE_PGXS=1 (standard PostgreSQL extension build system).
+# ca-certificates must be installed before wget; OrbStack/BuildKit can run with an empty
+# TLS trust store and wget fails with "certificate not trusted" without it.
+# Build tools are kept installed to avoid breaking pgvector's shared libraries.
+# Extensions are activated via docker-entrypoint-initdb.d/01-extensions.sql on first start.
+
+FROM pgvector/pgvector:pg18
+
+# Build and install pg_bigm from source
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        postgresql-server-dev-18 \
+        build-essential \
+        wget \
+        unzip \
+    && PG_BIGM_VERSION=1.2-20250903 \
+    && wget -q "https://github.com/pgbigm/pg_bigm/archive/refs/tags/v${PG_BIGM_VERSION}.zip" -O /tmp/pg_bigm.zip \
+    && unzip -q /tmp/pg_bigm.zip -d /tmp \
+    && cd "/tmp/pg_bigm-${PG_BIGM_VERSION}" \
+    && make USE_PGXS=1 \
+    && make USE_PGXS=1 install \
+    && cd / \
+    && rm -rf /tmp/pg_bigm* \
+    && rm -rf /var/lib/apt/lists/*
+USER postgres

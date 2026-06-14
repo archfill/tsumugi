@@ -7,21 +7,24 @@
 #   docker compose up -d
 #
 # 内訳:
-#   - tsumugi-postgres : Postgres 16 + pgvector + pg_bigm
+#   - tsumugi-postgres : Postgres 18 + pgvector + pg_bigm 1.2-20250903
 #   - tsumugi-server   : MCP server + REST API + dreaming worker
 
 services:
   tsumugi-postgres:
-    # NOTE: pg_bigm を含むカスタムイメージが必要。
-    # Phase 1 で Dockerfile.postgres を用意し置き換える。
-    image: pgvector/pgvector:pg16
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
     container_name: tsumugi-postgres
     environment:
       POSTGRES_DB: tsumugi
       POSTGRES_USER: tsumugi
       POSTGRES_PASSWORD: ${TSUMUGI_PG_PASSWORD:-tsumugi_dev}
+    # PG18+ は major-version-specific subdir (/var/lib/postgresql/18) を使うため、
+    # 親ディレクトリ /var/lib/postgresql 全体をマウントする（pg_upgrade --link 互換配置）
     volumes:
-      - tsumugi-pg-data:/var/lib/postgresql/data
+      - tsumugi-pg-data:/var/lib/postgresql
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
     ports:
       - "5433:5432"
     restart: unless-stopped

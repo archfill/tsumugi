@@ -11,7 +11,10 @@
     "lint": "echo 'lint: not configured yet'",
     "typecheck": "tsc -b",
     "test": "echo 'no tests yet'",
-    "check": "pnpm typecheck"
+    "check": "pnpm typecheck",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

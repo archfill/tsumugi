@@ -21,3 +21,15 @@ run = "pnpm test"
 [tasks.check]
 description = "All checks"
 run = "pnpm check"
+
+[tasks.db-generate]
+description = "Generate Drizzle migration files"
+run = "pnpm db:generate"
+
+[tasks.db-migrate]
+description = "Run pending Drizzle migrations"
+run = "pnpm db:migrate"
+
+[tasks.db-studio]
+description = "Open Drizzle Studio"
+run = "pnpm db:studio"
