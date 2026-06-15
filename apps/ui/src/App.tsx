@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -161,18 +161,16 @@ function totalFrom<F extends string, T>(
   return pages?.[0]?.total ?? 0;
 }
 
-/** 末尾要素が viewport に入ったら fetchNextPage を呼ぶ */
+/** 末尾要素が viewport に入ったら fetchNextPage を呼ぶ。
+ *  callback ref で node を state 化することで、タブ切替で sentinel が
+ *  unmount → 再 mount しても observer が再アタッチされる。 */
 function useInfiniteScrollSentinel(
   hasNextPage: boolean,
   isFetchingNextPage: boolean,
   fetchNextPage: () => void,
 ) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const cb = useCallback((node: HTMLDivElement | null) => {
-    ref.current = node;
-  }, []);
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
-    const node = ref.current;
     if (!node) return;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -185,8 +183,8 @@ function useInfiniteScrollSentinel(
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-  return cb;
+  }, [node, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  return setNode;
 }
 
 function makeGetNextPageParam<F extends string, T>(pageSize: number) {
