@@ -57,6 +57,11 @@ button:disabled {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 38px;
@@ -370,6 +375,9 @@ button:disabled {
   }
 
   .sidebar {
+    position: static;
+    height: auto;
+    overflow-y: visible;
     border-right: 0;
     border-bottom: 4px solid #c74932;
   }
