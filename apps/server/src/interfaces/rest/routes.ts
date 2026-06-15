@@ -15,10 +15,20 @@ function readLimit(value: string | undefined, fallback: number, max: number) {
   return Math.min(Math.trunc(parsed), max);
 }
 
+function readOffset(value: string | undefined): number {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.trunc(parsed);
+}
+
 restApp.get("/observations", async (c) => {
   const limit = readLimit(c.req.query("limit"), 100, 500);
-  const observations = await observationRepo.listRecent(limit);
-  return c.json({ observations });
+  const offset = readOffset(c.req.query("offset"));
+  const [observations, total] = await Promise.all([
+    observationRepo.listRecent(limit, offset),
+    observationRepo.countAll(),
+  ]);
+  return c.json({ observations, total });
 });
 
 restApp.delete("/observations/:id", async (c) => {
@@ -28,8 +38,12 @@ restApp.delete("/observations/:id", async (c) => {
 
 restApp.get("/memories", async (c) => {
   const limit = readLimit(c.req.query("limit"), 100, 500);
-  const memories = await memoryRepo.listActive(limit);
-  return c.json({ memories });
+  const offset = readOffset(c.req.query("offset"));
+  const [memories, total] = await Promise.all([
+    memoryRepo.listActive(limit, offset),
+    memoryRepo.countActive(),
+  ]);
+  return c.json({ memories, total });
 });
 
 restApp.patch("/memories/:id", async (c) => {
@@ -53,14 +67,22 @@ restApp.post("/memories/:id/archive", async (c) => {
 
 restApp.get("/decisions", async (c) => {
   const limit = readLimit(c.req.query("limit"), 200, 500);
-  const decisions = await decisionRepo.listRecent(limit);
-  return c.json({ decisions });
+  const offset = readOffset(c.req.query("offset"));
+  const [decisions, total] = await Promise.all([
+    decisionRepo.listRecent(limit, offset),
+    decisionRepo.countAll(),
+  ]);
+  return c.json({ decisions, total });
 });
 
 restApp.get("/links", async (c) => {
   const limit = readLimit(c.req.query("limit"), 500, 1000);
-  const links = await linkRepo.listRecent(limit);
-  return c.json({ links });
+  const offset = readOffset(c.req.query("offset"));
+  const [links, total] = await Promise.all([
+    linkRepo.listRecent(limit, offset),
+    linkRepo.countAll(),
+  ]);
+  return c.json({ links, total });
 });
 
 restApp.post("/dreaming/trigger", async (c) => {
@@ -70,9 +92,13 @@ restApp.post("/dreaming/trigger", async (c) => {
 });
 
 restApp.get("/dreaming/runs", async (c) => {
-  const limit = Number(c.req.query("limit") ?? 20);
-  const runs = await dreamingRunRepo.listRecent(Math.min(limit, 100));
-  return c.json({ runs });
+  const limit = readLimit(c.req.query("limit"), 20, 100);
+  const offset = readOffset(c.req.query("offset"));
+  const [runs, total] = await Promise.all([
+    dreamingRunRepo.listRecent(limit, offset),
+    dreamingRunRepo.countAll(),
+  ]);
+  return c.json({ runs, total });
 });
 
 restApp.get("/scheduler", (c) => {

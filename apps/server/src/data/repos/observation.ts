@@ -1,4 +1,4 @@
-import { desc, eq, isNull } from "drizzle-orm";
+import { desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { observations } from "../schema.js";
 
@@ -25,12 +25,19 @@ export const observationRepo = {
   async deleteById(id: string): Promise<void> {
     await db.delete(observations).where(eq(observations.id, id));
   },
-  async listRecent(limit = 100): Promise<ObservationRow[]> {
+  async listRecent(limit = 100, offset = 0): Promise<ObservationRow[]> {
     return await db
       .select()
       .from(observations)
       .orderBy(desc(observations.created_at))
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
+  },
+  async countAll(): Promise<number> {
+    const r = await db.execute<{ n: number }>(
+      sql`SELECT COUNT(*)::int AS n FROM observations`,
+    );
+    return Number(r.rows[0]?.n ?? 0);
   },
   // dreaming worker: observations not yet promoted to Layer 2
   async listPending(limit = 50): Promise<ObservationRow[]> {

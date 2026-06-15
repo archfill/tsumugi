@@ -1,5 +1,9 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 type TabId =
   | "observations"
@@ -111,6 +115,91 @@ function StatusPill({ value }: { value: string }) {
   return <span className={`pill pill-${value}`}>{value}</span>;
 }
 
+const PAGE_SIZE = {
+  observations: 200,
+  memories: 200,
+  decisions: 200,
+  links: 500,
+  runs: 50,
+} as const;
+
+interface PagedResponse<F extends string, T> {
+  total: number;
+  rows: T[];
+  field: F;
+}
+
+function makeListQueryFn<F extends string, T>(
+  path: string,
+  field: F,
+  pageSize: number,
+) {
+  return async ({ pageParam = 0 }: { pageParam: number }) => {
+    const data = (await api(
+      `${path}?limit=${pageSize}&offset=${pageParam}`,
+    )) as {
+      total: number;
+    } & Record<F, T[]>;
+    return {
+      total: data.total ?? 0,
+      rows: data[field] ?? [],
+      field,
+    } satisfies PagedResponse<F, T>;
+  };
+}
+
+function flattenPages<F extends string, T>(
+  pages: PagedResponse<F, T>[] | undefined,
+): T[] {
+  if (!pages) return [];
+  return pages.flatMap((p) => p.rows);
+}
+
+function totalFrom<F extends string, T>(
+  pages: PagedResponse<F, T>[] | undefined,
+): number {
+  return pages?.[0]?.total ?? 0;
+}
+
+/** 末尾要素が viewport に入ったら fetchNextPage を呼ぶ */
+function useInfiniteScrollSentinel(
+  hasNextPage: boolean,
+  isFetchingNextPage: boolean,
+  fetchNextPage: () => void,
+) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const cb = useCallback((node: HTMLDivElement | null) => {
+    ref.current = node;
+  }, []);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { rootMargin: "200px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  return cb;
+}
+
+function makeGetNextPageParam<F extends string, T>(pageSize: number) {
+  return (
+    lastPage: PagedResponse<F, T>,
+    allPages: PagedResponse<F, T>[],
+  ): number | undefined => {
+    const loaded = allPages.reduce((s, p) => s + p.rows.length, 0);
+    if (loaded >= lastPage.total) return undefined;
+    return loaded;
+  };
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("observations");
   const [query, setQuery] = useState("");
@@ -118,31 +207,117 @@ export default function App() {
   const [dreamJob, setDreamJob] = useState("promote-observations");
   const queryClient = useQueryClient();
 
-  const observations = useQuery({
+  const observations = useInfiniteQuery({
     queryKey: ["observations"],
-    queryFn: () => api<{ observations: Observation[] }>("/observations"),
+    initialPageParam: 0,
+    queryFn: makeListQueryFn<"observations", Observation>(
+      "/observations",
+      "observations",
+      PAGE_SIZE.observations,
+    ),
+    getNextPageParam: makeGetNextPageParam<"observations", Observation>(
+      PAGE_SIZE.observations,
+    ),
   });
-  const memories = useQuery({
+  const memories = useInfiniteQuery({
     queryKey: ["memories"],
-    queryFn: () => api<{ memories: Memory[] }>("/memories"),
+    initialPageParam: 0,
+    queryFn: makeListQueryFn<"memories", Memory>(
+      "/memories",
+      "memories",
+      PAGE_SIZE.memories,
+    ),
+    getNextPageParam: makeGetNextPageParam<"memories", Memory>(
+      PAGE_SIZE.memories,
+    ),
   });
-  const decisions = useQuery({
+  const decisions = useInfiniteQuery({
     queryKey: ["decisions"],
-    queryFn: () => api<{ decisions: Decision[] }>("/decisions"),
+    initialPageParam: 0,
+    queryFn: makeListQueryFn<"decisions", Decision>(
+      "/decisions",
+      "decisions",
+      PAGE_SIZE.decisions,
+    ),
+    getNextPageParam: makeGetNextPageParam<"decisions", Decision>(
+      PAGE_SIZE.decisions,
+    ),
   });
-  const links = useQuery({
+  const links = useInfiniteQuery({
     queryKey: ["links"],
-    queryFn: () => api<{ links: Link[] }>("/links"),
+    initialPageParam: 0,
+    queryFn: makeListQueryFn<"links", Link>("/links", "links", PAGE_SIZE.links),
+    getNextPageParam: makeGetNextPageParam<"links", Link>(PAGE_SIZE.links),
   });
-  const runs = useQuery({
+  const runs = useInfiniteQuery({
     queryKey: ["dreaming-runs"],
-    queryFn: () => api<{ runs: DreamingRun[] }>("/dreaming/runs"),
+    initialPageParam: 0,
+    queryFn: makeListQueryFn<"runs", DreamingRun>(
+      "/dreaming/runs",
+      "runs",
+      PAGE_SIZE.runs,
+    ),
+    getNextPageParam: makeGetNextPageParam<"runs", DreamingRun>(PAGE_SIZE.runs),
   });
+
+  const observationsRows = useMemo(
+    () => flattenPages(observations.data?.pages),
+    [observations.data?.pages],
+  );
+  const memoriesRows = useMemo(
+    () => flattenPages(memories.data?.pages),
+    [memories.data?.pages],
+  );
+  const decisionsRows = useMemo(
+    () => flattenPages(decisions.data?.pages),
+    [decisions.data?.pages],
+  );
+  const linksRows = useMemo(
+    () => flattenPages(links.data?.pages),
+    [links.data?.pages],
+  );
+  const runsRows = useMemo(
+    () => flattenPages(runs.data?.pages),
+    [runs.data?.pages],
+  );
+
+  const observationsTotal = totalFrom(observations.data?.pages);
+  const memoriesTotal = totalFrom(memories.data?.pages);
+  const decisionsTotal = totalFrom(decisions.data?.pages);
+  const linksTotal = totalFrom(links.data?.pages);
+  const runsTotal = totalFrom(runs.data?.pages);
+
+  const obsSentinelRef = useInfiniteScrollSentinel(
+    !!observations.hasNextPage,
+    observations.isFetchingNextPage,
+    observations.fetchNextPage,
+  );
+  const memSentinelRef = useInfiniteScrollSentinel(
+    !!memories.hasNextPage,
+    memories.isFetchingNextPage,
+    memories.fetchNextPage,
+  );
+  const decSentinelRef = useInfiniteScrollSentinel(
+    !!decisions.hasNextPage,
+    decisions.isFetchingNextPage,
+    decisions.fetchNextPage,
+  );
+  const linksSentinelRef = useInfiniteScrollSentinel(
+    !!links.hasNextPage,
+    links.isFetchingNextPage,
+    links.fetchNextPage,
+  );
+  const runsSentinelRef = useInfiniteScrollSentinel(
+    !!runs.hasNextPage,
+    runs.isFetchingNextPage,
+    runs.fetchNextPage,
+  );
 
   const deleteObservation = useMutation({
     mutationFn: (id: string) =>
       api<{ ok: true }>(`/observations/${id}`, { method: "DELETE" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["observations"] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["observations"] }),
   });
 
   const archiveMemory = useMutation({
@@ -173,34 +348,69 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ job }),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["dreaming-runs"] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["dreaming-runs"] }),
   });
 
   const filteredObservations = useMemo(
     () =>
-      (observations.data?.observations ?? []).filter((item) =>
+      observationsRows.filter((item) =>
         includesText(
           [item.id, item.content, item.type, item.source, item.project_tag],
           query,
         ),
       ),
-    [observations.data, query],
+    [observationsRows, query],
   );
 
   const filteredMemories = useMemo(
     () =>
-      (memories.data?.memories ?? []).filter((item) =>
-        includesText([item.id, item.narrative, item.kind, item.importance], query),
+      memoriesRows.filter((item) =>
+        includesText(
+          [item.id, item.narrative, item.kind, item.importance],
+          query,
+        ),
       ),
-    [memories.data, query],
+    [memoriesRows, query],
   );
 
   const filteredDecisions = useMemo(
     () =>
-      (decisions.data?.decisions ?? []).filter((item) =>
-        includesText([item.id, item.content, item.status, item.supersedes_id], query),
+      decisionsRows.filter((item) =>
+        includesText(
+          [item.id, item.content, item.status, item.supersedes_id],
+          query,
+        ),
       ),
-    [decisions.data, query],
+    [decisionsRows, query],
+  );
+
+  const filteredLinks = useMemo(
+    () =>
+      linksRows.filter((item) =>
+        includesText(
+          [
+            item.from_id,
+            item.to_id,
+            item.relation,
+            item.from_layer,
+            item.to_layer,
+          ],
+          query,
+        ),
+      ),
+    [linksRows, query],
+  );
+
+  const filteredRuns = useMemo(
+    () =>
+      runsRows.filter((item) =>
+        includesText(
+          [item.id, item.job_kind, item.status, item.error_message],
+          query,
+        ),
+      ),
+    [runsRows, query],
   );
 
   return (
@@ -246,7 +456,10 @@ export default function App() {
         {activeTab === "observations" && (
           <section className="panel">
             <div className="panel-head">
-              <strong>{filteredObservations.length} observations</strong>
+              <strong>
+                {filteredObservations.length} shown / {observationsRows.length}{" "}
+                loaded / {observationsTotal} total
+              </strong>
               <button onClick={() => observations.refetch()} type="button">
                 Refresh
               </button>
@@ -277,6 +490,15 @@ export default function App() {
                   </button>
                 </article>
               ))}
+              <div ref={obsSentinelRef} className="infinite-sentinel">
+                {observations.isFetchingNextPage
+                  ? "Loading…"
+                  : observations.hasNextPage
+                    ? "Scroll for more"
+                    : observationsRows.length > 0
+                      ? "End of list"
+                      : null}
+              </div>
             </div>
           </section>
         )}
@@ -284,7 +506,10 @@ export default function App() {
         {activeTab === "memories" && (
           <section className="panel">
             <div className="panel-head">
-              <strong>{filteredMemories.length} active memories</strong>
+              <strong>
+                {filteredMemories.length} shown / {memoriesRows.length} loaded /{" "}
+                {memoriesTotal} total
+              </strong>
               <button onClick={() => memories.refetch()} type="button">
                 Refresh
               </button>
@@ -302,7 +527,10 @@ export default function App() {
                     <p>{item.id}</p>
                   </div>
                   <div className="actions">
-                    <button type="button" onClick={() => setSelectedMemory(item)}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMemory(item)}
+                    >
                       Edit
                     </button>
                     <button
@@ -319,6 +547,15 @@ export default function App() {
                   </div>
                 </article>
               ))}
+              <div ref={memSentinelRef} className="infinite-sentinel">
+                {memories.isFetchingNextPage
+                  ? "Loading…"
+                  : memories.hasNextPage
+                    ? "Scroll for more"
+                    : memoriesRows.length > 0
+                      ? "End of list"
+                      : null}
+              </div>
             </div>
           </section>
         )}
@@ -326,7 +563,10 @@ export default function App() {
         {activeTab === "decisions" && (
           <section className="panel">
             <div className="panel-head">
-              <strong>{filteredDecisions.length} decisions</strong>
+              <strong>
+                {filteredDecisions.length} shown / {decisionsRows.length} loaded
+                / {decisionsTotal} total
+              </strong>
               <button onClick={() => decisions.refetch()} type="button">
                 Refresh
               </button>
@@ -336,9 +576,22 @@ export default function App() {
                 <article className="decision" key={item.id}>
                   <StatusPill value={item.status} />
                   <h3>{item.content}</h3>
-                  <p>{item.supersedes_id ? `supersedes ${item.supersedes_id}` : item.id}</p>
+                  <p>
+                    {item.supersedes_id
+                      ? `supersedes ${item.supersedes_id}`
+                      : item.id}
+                  </p>
                 </article>
               ))}
+              <div ref={decSentinelRef} className="infinite-sentinel">
+                {decisions.isFetchingNextPage
+                  ? "Loading…"
+                  : decisions.hasNextPage
+                    ? "Scroll for more"
+                    : decisionsRows.length > 0
+                      ? "End of list"
+                      : null}
+              </div>
             </div>
           </section>
         )}
@@ -346,14 +599,20 @@ export default function App() {
         {activeTab === "provenance" && (
           <section className="panel provenance">
             <div className="panel-head">
-              <strong>{links.data?.links.length ?? 0} links</strong>
+              <strong>
+                {filteredLinks.length} shown / {linksRows.length} loaded /{" "}
+                {linksTotal} total
+              </strong>
               <button onClick={() => links.refetch()} type="button">
                 Refresh
               </button>
             </div>
             <div className="graph">
-              {(links.data?.links ?? []).slice(0, 24).map((item) => (
-                <article className="edge" key={`${item.from_id}-${item.to_id}-${item.relation}`}>
+              {filteredLinks.map((item) => (
+                <article
+                  className="edge"
+                  key={`${item.from_id}-${item.to_id}-${item.relation}`}
+                >
                   <span>{item.from_layer}</span>
                   <strong>{item.relation}</strong>
                   <span>{item.to_layer}</span>
@@ -362,6 +621,15 @@ export default function App() {
                   </p>
                 </article>
               ))}
+              <div ref={linksSentinelRef} className="infinite-sentinel">
+                {links.isFetchingNextPage
+                  ? "Loading…"
+                  : links.hasNextPage
+                    ? "Scroll for more"
+                    : linksRows.length > 0
+                      ? "End of list"
+                      : null}
+              </div>
             </div>
           </section>
         )}
@@ -369,7 +637,10 @@ export default function App() {
         {activeTab === "dreaming" && (
           <section className="panel">
             <div className="runner">
-              <select value={dreamJob} onChange={(event) => setDreamJob(event.target.value)}>
+              <select
+                value={dreamJob}
+                onChange={(event) => setDreamJob(event.target.value)}
+              >
                 {jobs.map((job) => (
                   <option key={job} value={job}>
                     {job}
@@ -384,8 +655,17 @@ export default function App() {
                 Trigger
               </button>
             </div>
+            <div className="panel-head">
+              <strong>
+                {filteredRuns.length} shown / {runsRows.length} loaded /{" "}
+                {runsTotal} total
+              </strong>
+              <button onClick={() => runs.refetch()} type="button">
+                Refresh
+              </button>
+            </div>
             <div className="runs">
-              {(runs.data?.runs ?? []).map((run) => (
+              {filteredRuns.map((run) => (
                 <article className="run" key={run.id}>
                   <StatusPill value={run.status} />
                   <strong>{run.job_kind}</strong>
@@ -394,6 +674,15 @@ export default function App() {
                   {run.error_message && <p>{run.error_message}</p>}
                 </article>
               ))}
+              <div ref={runsSentinelRef} className="infinite-sentinel">
+                {runs.isFetchingNextPage
+                  ? "Loading…"
+                  : runs.hasNextPage
+                    ? "Scroll for more"
+                    : runsRows.length > 0
+                      ? "End of list"
+                      : null}
+              </div>
             </div>
           </section>
         )}
@@ -433,7 +722,10 @@ export default function App() {
               <textarea
                 value={selectedMemory.narrative}
                 onChange={(event) =>
-                  setSelectedMemory({ ...selectedMemory, narrative: event.target.value })
+                  setSelectedMemory({
+                    ...selectedMemory,
+                    narrative: event.target.value,
+                  })
                 }
               />
             </label>
@@ -442,7 +734,10 @@ export default function App() {
               <input
                 value={selectedMemory.kind}
                 onChange={(event) =>
-                  setSelectedMemory({ ...selectedMemory, kind: event.target.value })
+                  setSelectedMemory({
+                    ...selectedMemory,
+                    kind: event.target.value,
+                  })
                 }
               />
             </label>

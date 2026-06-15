@@ -24,12 +24,19 @@ export const decisionRepo = {
       .where(eq(decisions.status, status))
       .limit(limit);
   },
-  async listRecent(limit = 200): Promise<DecisionRow[]> {
+  async listRecent(limit = 200, offset = 0): Promise<DecisionRow[]> {
     return await db
       .select()
       .from(decisions)
       .orderBy(desc(decisions.created_at))
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
+  },
+  async countAll(): Promise<number> {
+    const r = await db.execute<{ n: number }>(
+      sql`SELECT COUNT(*)::int AS n FROM decisions`,
+    );
+    return Number(r.rows[0]?.n ?? 0);
   },
   async update(id: string, patch: Partial<NewDecisionRow>): Promise<void> {
     await db

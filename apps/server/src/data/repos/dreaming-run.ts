@@ -38,11 +38,18 @@ export const dreamingRunRepo = {
       })
       .where(eq(dreamingRuns.id, id));
   },
-  async listRecent(limit = 20): Promise<DreamingRunRow[]> {
+  async listRecent(limit = 20, offset = 0): Promise<DreamingRunRow[]> {
     return await db
       .select()
       .from(dreamingRuns)
       .orderBy(desc(dreamingRuns.started_at))
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
+  },
+  async countAll(): Promise<number> {
+    const r = await db.execute<{ n: number }>(
+      sql`SELECT COUNT(*)::int AS n FROM dreaming_runs`,
+    );
+    return Number(r.rows[0]?.n ?? 0);
   },
 };

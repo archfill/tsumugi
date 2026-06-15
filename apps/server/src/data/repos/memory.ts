@@ -1,4 +1,4 @@
-import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { memories } from "../schema.js";
 
@@ -29,12 +29,20 @@ export const memoryRepo = {
       .limit(1);
     return rows[0] ?? null;
   },
-  async listActive(limit = 100): Promise<MemoryRow[]> {
+  async listActive(limit = 100, offset = 0): Promise<MemoryRow[]> {
     return await db
       .select()
       .from(memories)
       .where(isNull(memories.archived_at))
-      .limit(limit);
+      .orderBy(desc(memories.created_at))
+      .limit(limit)
+      .offset(offset);
+  },
+  async countActive(): Promise<number> {
+    const r = await db.execute<{ n: number }>(
+      sql`SELECT COUNT(*)::int AS n FROM memories WHERE archived_at IS NULL`,
+    );
+    return Number(r.rows[0]?.n ?? 0);
   },
   /**
    * LLM 処理対象として有効な (= archive 済みでも quarantine 済みでもなく、
