@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { links } from "../schema.js";
 
@@ -15,8 +15,14 @@ export const linkRepo = {
   async listTo(toId: string): Promise<LinkRow[]> {
     return await db.select().from(links).where(eq(links.to_id, toId));
   },
-  async listRecent(limit = 500): Promise<LinkRow[]> {
-    return await db.select().from(links).limit(limit);
+  async listRecent(limit = 500, offset = 0): Promise<LinkRow[]> {
+    return await db.select().from(links).limit(limit).offset(offset);
+  },
+  async countAll(): Promise<number> {
+    const r = await db.execute<{ n: number }>(
+      sql`SELECT COUNT(*)::int AS n FROM links`,
+    );
+    return Number(r.rows[0]?.n ?? 0);
   },
   async remove(fromId: string, toId: string, relation: string): Promise<void> {
     await db
