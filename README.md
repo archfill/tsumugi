@@ -40,8 +40,10 @@ tsumugi/
 │   └── ui/               # admin UI (React + Vite + Tailwind + shadcn)
 ├── packages/
 │   └── shared/           # 型 / Zod スキーマ共有
-├── compose.yml           # tsumugi-server + tsumugi-postgres
-├── Dockerfile            # multi-stage (UI build → server bundle)
+├── compose.yml           # tsumugi-front + tsumugi-server + tsumugi-postgres
+├── Dockerfile            # server image (Node + onnxruntime + dreaming worker)
+├── Dockerfile.postgres   # postgres + pgvector + pg_bigm
+├── apps/ui/Dockerfile    # front image (nginx 配信 + /api・/mcp を server に proxy)
 ├── package.json          # pnpm workspace root
 ├── pnpm-workspace.yaml
 └── mise.toml             # node + pnpm 宣言
@@ -97,6 +99,31 @@ mise run typecheck            # 型チェックのみ
 | 他システム   | MCP（HTTP/SSE）          |
 
 複数 PC からの利用はネットワーク到達性のある場所に tsumugi を立ち上げて HTTP/SSE で接続する。
+
+## デプロイ構成
+
+`docker compose up -d` で 3 コンテナが起動する:
+
+```
+┌─ host:8000 ─→ tsumugi-front (nginx) ─┬─ /api/*, /mcp, /health → tsumugi-server:8000
+                                       └─ /, /assets/*          → React admin UI
+                                            tsumugi-server ───→ tsumugi-postgres:5432
+```
+
+- 入口は `tsumugi-front` (nginx) 1 ヶ所
+- `tsumugi-server` と `tsumugi-postgres` は compose ネットワーク内のみで通信、外部公開しない
+- 利用者は `localhost:8000` で UI + API + MCP すべてアクセス可能
+
+### 認証について
+
+**tsumugi 本体に認証機構はない**。public ネットワークに公開する場合は、必ず外側に reverse proxy + 認証層を挟むこと:
+
+- Traefik + BasicAuth middleware
+- Caddy + caddy-security
+- nginx-proxy + oauth2-proxy
+- Cloudflare Access / Tailscale Funnel 等
+
+private network (VPN 内、LAN 内) で使う場合はそのままでも可。
 
 ## ステータス・ロードマップ
 
