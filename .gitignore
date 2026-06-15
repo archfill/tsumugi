@@ -49,3 +49,6 @@ logs/
 # Eval (private fixtures derived from yui internal data, bench output artifacts)
 apps/server/eval/fixtures-private/
 apps/server/eval/results/
+
+# yui → tsumugi migration staging (private data)
+apps/server/scripts/yui-migration/staging/
