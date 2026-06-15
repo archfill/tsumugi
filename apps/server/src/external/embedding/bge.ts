@@ -1,6 +1,10 @@
 import process from "node:process";
 import { env, pipeline } from "@xenova/transformers";
 import { logger } from "../../lib/logger.js";
+import {
+  embedderCallDurationSeconds,
+  embedderCallsTotal,
+} from "../../lib/metrics.js";
 
 export interface Embedder {
   embed(text: string): Promise<Float32Array>;
@@ -39,37 +43,61 @@ export function createBgeEmbedder(opts?: BgeEmbedderOptions): Embedder {
 
   return {
     async embed(text: string): Promise<Float32Array> {
-      const pipe = await getPipeline();
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-      const output = await pipe(text, { pooling: "cls", normalize: true });
-      const data = output.data as Float32Array;
-      if (data.length !== 1024) {
-        logger.warn(
-          { expected: 1024, actual: data.length },
-          "embedding dim mismatch",
-        );
+      const started = process.hrtime.bigint();
+      let status: "success" | "error" = "success";
+      try {
+        const pipe = await getPipeline();
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        const output = await pipe(text, { pooling: "cls", normalize: true });
+        const data = output.data as Float32Array;
+        if (data.length !== 1024) {
+          logger.warn(
+            { expected: 1024, actual: data.length },
+            "embedding dim mismatch",
+          );
+        }
+        return data;
+      } catch (err) {
+        status = "error";
+        throw err;
+      } finally {
+        const seconds = Number(process.hrtime.bigint() - started) / 1e9;
+        embedderCallDurationSeconds.observe({ operation: "embed" }, seconds);
+        embedderCallsTotal.inc({ operation: "embed", status });
       }
-      return data;
     },
 
     async embedMany(texts: string[]): Promise<Float32Array[]> {
       if (texts.length === 0) return [];
-      const pipe = await getPipeline();
+      const started = process.hrtime.bigint();
+      let status: "success" | "error" = "success";
+      try {
+        const pipe = await getPipeline();
+        // Batch input — @xenova/transformers pipeline accepts arrays.
+        // output.data is a flattened Float32Array; output.dims is [N, dim].
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        const output = await pipe(texts, { pooling: "cls", normalize: true });
+        const flatData = output.data as Float32Array;
+        const dims = output.dims as number[];
+        const n = dims[0] ?? texts.length;
+        const dim = dims[1] ?? 1024;
 
-      // Batch input — @xenova/transformers pipeline accepts arrays.
-      // output.data is a flattened Float32Array; output.dims is [N, dim].
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-      const output = await pipe(texts, { pooling: "cls", normalize: true });
-      const flatData = output.data as Float32Array;
-      const dims = output.dims as number[];
-      const n = dims[0] ?? texts.length;
-      const dim = dims[1] ?? 1024;
-
-      const results: Float32Array[] = [];
-      for (let i = 0; i < n; i++) {
-        results.push(flatData.slice(i * dim, (i + 1) * dim));
+        const results: Float32Array[] = [];
+        for (let i = 0; i < n; i++) {
+          results.push(flatData.slice(i * dim, (i + 1) * dim));
+        }
+        return results;
+      } catch (err) {
+        status = "error";
+        throw err;
+      } finally {
+        const seconds = Number(process.hrtime.bigint() - started) / 1e9;
+        embedderCallDurationSeconds.observe(
+          { operation: "embedMany" },
+          seconds,
+        );
+        embedderCallsTotal.inc({ operation: "embedMany", status });
       }
-      return results;
     },
 
     dimension(): number {

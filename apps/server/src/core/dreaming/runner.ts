@@ -18,6 +18,10 @@ import { timeAwareMemoryUpdate } from "./time-update.js";
 import { detectDecisionContradictions } from "./decision-contradiction.js";
 import { reflectOnSession } from "./reflection.js";
 import { ValidationError } from "../../lib/errors.js";
+import {
+  dreamingRunDurationSeconds,
+  dreamingRunsTotal,
+} from "../../lib/metrics.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -273,6 +277,11 @@ export async function runDreaming(
 
   const finishedAt = new Date().toISOString();
   const durationMs = Date.now() - startMs;
+
+  // Record metrics: 'success' if every step succeeded, otherwise 'partial'
+  const allOk = steps.every((s) => s.ok);
+  dreamingRunDurationSeconds.observe({ job }, durationMs / 1000);
+  dreamingRunsTotal.inc({ job, status: allOk ? "success" : "partial" });
 
   return {
     job,
