@@ -205,6 +205,11 @@ export default function App() {
   const [dreamJob, setDreamJob] = useState("promote-observations");
   const queryClient = useQueryClient();
 
+  // タブ切替時は前タブのスクロール位置を引き継がず最上部に戻す
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [activeTab]);
+
   const observations = useInfiniteQuery({
     queryKey: ["observations"],
     initialPageParam: 0,
