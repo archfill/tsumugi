@@ -1,4 +1,4 @@
-# Tsumugi local compose (placeholder)
+# Tsumugi local compose
 #
 # Production の compose は別途管理する想定。
 # このファイルは開発・動作確認用。
@@ -6,9 +6,18 @@
 # 起動:
 #   docker compose up -d
 #
-# 内訳:
-#   - tsumugi-postgres : Postgres 18 + pgvector + pg_bigm 1.2-20250903
-#   - tsumugi-server   : MCP server + REST API + dreaming worker
+# 構成:
+#   - tsumugi-postgres : Postgres 18 + pgvector + pg_bigm 1.2-20250903 (internal only)
+#   - tsumugi-server   : MCP server + REST API + dreaming worker (internal only)
+#   - tsumugi-front    : nginx で React admin UI を配信、/api と /mcp は server に proxy
+#
+# アクセス:
+#   - http://localhost:8000/         → admin UI
+#   - http://localhost:8000/api/...  → REST API (nginx 経由)
+#   - http://localhost:8000/mcp      → MCP transport (nginx 経由)
+#
+# auth は本リポでは扱わない。public 公開時は reverse proxy 側 (Traefik / Caddy /
+# nginx-proxy 等) で TLS と認証を被せること。
 
 services:
   tsumugi-postgres:
@@ -21,11 +30,12 @@ services:
       POSTGRES_USER: tsumugi
       POSTGRES_PASSWORD: ${TSUMUGI_PG_PASSWORD:-tsumugi_dev}
     # PG18+ は major-version-specific subdir (/var/lib/postgresql/18) を使うため、
-    # 親ディレクトリ /var/lib/postgresql 全体をマウントする（pg_upgrade --link 互換配置）
+    # 親ディレクトリ /var/lib/postgresql 全体をマウントする (pg_upgrade --link 互換配置)
     volumes:
       - tsumugi-pg-data:/var/lib/postgresql
       - ./docker/postgres/init:/docker-entrypoint-initdb.d
     ports:
+      # ローカル DB クライアントでの調査用、外部から接続不要なら削除可
       - "5433:5432"
     restart: unless-stopped
     healthcheck:
@@ -35,7 +45,6 @@ services:
       retries: 5
 
   tsumugi-server:
-    # Phase 1 で Dockerfile を完成させて利用する。
     build:
       context: .
       dockerfile: Dockerfile
@@ -55,11 +64,22 @@ services:
       LLM_MID_BASE_URL: ${LLM_MID_BASE_URL:-https://api.z.ai/api/paas/v4}
     volumes:
       - tsumugi-hf-cache:/app/.cache/huggingface
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     depends_on:
       tsumugi-postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  tsumugi-front:
+    build:
+      context: .
+      dockerfile: apps/ui/Dockerfile
+    container_name: tsumugi-front
+    ports:
+      - "8000:80"
+    depends_on:
+      - tsumugi-server
     restart: unless-stopped
 
 volumes:
