@@ -42,6 +42,35 @@ const THIN_MEM_TOOL_RE = /^(Read|Edit|Write|Bash|Glob|Grep): \S+\s*$/;
 const THIN_MEM_MAX_LEN = 120;
 
 /**
+ * 2026-06-16 追加: 本番 obs から実測した noise パターン (合計 ~1,946 件削除)。
+ * - File read/edit の path のみ (679 + 79)
+ * - session ended: <uuid> のみ ≤80 (138) + uuid + session in /path (10) + uuid + [tools:...] (2)
+ * - apply_patch の 170 字以上 truncated (93、全部 173 字ヘッダ断片)
+ * - Command run: cd/export/echo/pwd/PROD_URL= の shell op 履歴 (483)
+ * - Command run: sed/nl/rg/head/tail/cat/awk/less/more の file reader (266 + 135)
+ * - Bash: 60 字以下の短い shell コマンド履歴 (61)
+ */
+const NOISE_RES: { re: RegExp; label: string }[] = [
+  { re: /^File read: \S+\s*$/, label: "noise:file-read-path-only" },
+  { re: /^File edit: \S+\s*$/, label: "noise:file-edit-path-only" },
+  {
+    re: /^Command run: (cd|export|echo|pwd|PROD_URL=)\b/,
+    label: "noise:cmd-shell-op",
+  },
+  {
+    re: /^Command run: (sed|nl|rg|head|tail|cat|awk|less|more)\b/,
+    label: "noise:cmd-file-reader",
+  },
+];
+const NOISE_SESSION_END_THIN_LEN = 80;
+const NOISE_BASH_SHORT_LEN = 60;
+const NOISE_APPLY_PATCH_MIN_TRUNCATED_LEN = 170;
+const NOISE_SESSION_IN_PATH_RE =
+  /^session ended: [0-9a-f-]+ \| session in \S+\s*$/;
+const NOISE_SESSION_TOOLS_ONLY_RE =
+  /^session ended: [0-9a-f-]+ \| \[tools:[^|]+\]\s*$/;
+
+/**
  * Secrets / credentials 参照を含む narrative。observations にも memories にも適用。
  * - postgresql://user:pass@... / mysql:// / mongodb:// 等の inline 接続文字列
  * - password= / token= / secret= の代入パターン (quoted も)
@@ -204,6 +233,38 @@ function isThinObs(narrative: string): boolean {
   return THIN_TOOL_RE.test(narrative);
 }
 
+/** 2026-06-16 追加 noise パターンの判定。マッチした noise label を返す。 */
+function classifyNoise(narrative: string): string | null {
+  for (const { re, label } of NOISE_RES) {
+    if (re.test(narrative)) return label;
+  }
+  if (
+    narrative.startsWith("session ended:") &&
+    narrative.length <= NOISE_SESSION_END_THIN_LEN
+  ) {
+    return "noise:session-ended-uuid-only";
+  }
+  if (NOISE_SESSION_IN_PATH_RE.test(narrative)) {
+    return "noise:session-ended-cwd-only";
+  }
+  if (NOISE_SESSION_TOOLS_ONLY_RE.test(narrative)) {
+    return "noise:session-ended-tools-only";
+  }
+  if (
+    narrative.startsWith("apply_patch:") &&
+    narrative.length >= NOISE_APPLY_PATCH_MIN_TRUNCATED_LEN
+  ) {
+    return "noise:apply-patch-truncated";
+  }
+  if (
+    narrative.startsWith("Bash:") &&
+    narrative.length <= NOISE_BASH_SHORT_LEN
+  ) {
+    return "noise:bash-short";
+  }
+  return null;
+}
+
 function isThinMem(narrative: string): boolean {
   if (narrative.length > THIN_MEM_MAX_LEN) return false;
   for (const p of THIN_MEM_PREFIX) {
@@ -237,6 +298,11 @@ function filterObservations(rows: RawObs[]): {
     }
     if (isThinObs(narr)) {
       inc("thin-tool-pattern");
+      continue;
+    }
+    const noiseLabel = classifyNoise(narr);
+    if (noiseLabel) {
+      inc(noiseLabel);
       continue;
     }
     if (SECRETS_RE.test(narr)) {

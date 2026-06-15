@@ -159,9 +159,10 @@ async function insertObservations(
   const batchSize = opts.batchSize;
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize);
-    const embeddings = opts.skipEmbed
-      ? batch.map(() => null)
-      : await embedBatch(batch.map((r) => r.content));
+    const embeddings =
+      opts.dryRun || opts.skipEmbed
+        ? batch.map(() => null)
+        : await embedBatch(batch.map((r) => r.content));
 
     if (opts.dryRun) {
       inserted += batch.length;
@@ -361,8 +362,12 @@ async function main(): Promise<void> {
     `to insert: obs ${obsFinal.length} (loaded ${obsRaw.length}, excluded ${obsRaw.length - obs.length}), mem ${memFinal.length}, dec ${decFinal.length}`,
   );
 
-  // Warmup embedder
-  if (!opts.skipEmbed && (obsFinal.length > 0 || memFinal.length > 0)) {
+  // Warmup embedder (skip for dry-run since we don't write anything)
+  if (
+    !opts.dryRun &&
+    !opts.skipEmbed &&
+    (obsFinal.length > 0 || memFinal.length > 0)
+  ) {
     console.log("warming up embedder...");
     warmupEmbedder();
     // Force eager warmup completion before batch processing
