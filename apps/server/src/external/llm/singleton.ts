@@ -5,6 +5,7 @@ import {
 } from "../../lib/config.js";
 import { TsumugiError, ExternalError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { llmCallDurationSeconds, llmCallsTotal } from "../../lib/metrics.js";
 import { createAnthropicClient } from "./anthropic.js";
 import { createOpenAiCompatClient } from "./openai-compat.js";
 import type { LlmClient, LlmRequest, LlmResponse, LlmTier } from "./types.js";
@@ -19,22 +20,65 @@ function buildBasicClient(tier: LlmTier, cfg: LlmModelConfig): LlmClient {
     throw new TsumugiError(`LLM_${tier.toUpperCase()}_MODEL is not set`);
   }
 
+  let raw: LlmClient;
   switch (cfg.provider) {
     case "anthropic":
-      return createAnthropicClient({ apiKey: cfg.apiKey, model: cfg.model });
+      raw = createAnthropicClient({ apiKey: cfg.apiKey, model: cfg.model });
+      break;
     case "openai-compat": {
       if (!cfg.baseUrl) {
         throw new TsumugiError(
           `LLM_${tier.toUpperCase()}_BASE_URL is required for provider 'openai-compat'`,
         );
       }
-      return createOpenAiCompatClient({
+      raw = createOpenAiCompatClient({
         apiKey: cfg.apiKey,
         model: cfg.model,
         baseUrl: cfg.baseUrl,
       });
+      break;
     }
   }
+  return instrumentClient(raw, tier, cfg);
+}
+
+/**
+ * Wrap a basic LLM client with Prometheus metrics.
+ * Records duration histogram + total counter labelled by tier/provider/model/status.
+ * Sits between primary call and fallback so each tier's primary and fallback
+ * get separate metric series via their own labels.
+ */
+function instrumentClient(
+  inner: LlmClient,
+  tier: LlmTier,
+  cfg: LlmModelConfig,
+): LlmClient {
+  const baseLabels = {
+    tier,
+    provider: cfg.provider,
+    model: cfg.model,
+  };
+
+  async function timed<T>(fn: () => Promise<T>): Promise<T> {
+    const started = process.hrtime.bigint();
+    let status: "success" | "error" = "success";
+    try {
+      return await fn();
+    } catch (err) {
+      status = "error";
+      throw err;
+    } finally {
+      const seconds = Number(process.hrtime.bigint() - started) / 1e9;
+      llmCallDurationSeconds.observe(baseLabels, seconds);
+      llmCallsTotal.inc({ ...baseLabels, status });
+    }
+  }
+
+  return {
+    complete: (req) => timed(() => inner.complete(req)),
+    completeJson: <T>(req: LlmRequest) =>
+      timed(() => inner.completeJson<T>(req)),
+  };
 }
 
 /**

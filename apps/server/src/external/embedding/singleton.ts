@@ -1,5 +1,6 @@
 import { type Embedder, createBgeEmbedder } from "./bge.js";
 import { logger } from "../../lib/logger.js";
+import { embedderWarmedUp } from "../../lib/metrics.js";
 
 let instance: Embedder | null = null;
 
@@ -31,6 +32,7 @@ export function warmupEmbedder(): void {
   void getEmbedder()
     .embed("warmup")
     .then(() => {
+      embedderWarmedUp.set(1);
       logger.info(
         { durationMs: Date.now() - started },
         "embedder warm-up complete",
