@@ -92,20 +92,104 @@ Phase 4 は archfill の memory データ移行 + yui 側 memory 実装撤去ま
 - yui の embedder / pgvector / audn / dreaming 等の memory 実装を削除
 - yui DB の memory 系テーブルを drop (snapshot 保存後)
 
+## API surface ギャップ分析 (2026-06-16 追加)
+
+Step 2 の前倒し調査結果。yui の memory 関連 surface (~65 service method
+
+- 14 HTTP endpoint + 5 job + 27 concept) を tsumugi の現状 surface
+  (4 MCP tool + 10 REST + 5 dreaming job) と照合し、cutover 前に
+  どこを埋めるべきかを確定させた。
+
+### A. tsumugi に同等あり — そのまま cutover 可
+
+`save_observation` / `search_memory` (hybrid) / `list/count/archive`
+系 / dreaming jobs / link traversal 等、約 30 操作。
+
+### B. 思想差で代替・廃止 — cutover で消す
+
+yui 側のこれらは tsumugi の自動 pipeline で吸収するか、設計判断で捨てる:
+
+| yui の機能                                                 | tsumugi での扱い                               |
+| ---------------------------------------------------------- | ---------------------------------------------- |
+| `MemoryPromoteService.promote_session_obs`                 | dreaming `promote-observations` で自動         |
+| `ObservationSummarizeService.summarize_obs`                | tsumugi は素の content を保存 (事前要約しない) |
+| `apply_summarization` (後付け narrative)                   | 同上                                           |
+| `list_promote_candidates` (半自動 UI 候補)                 | 自動 promote のみで UI フロー無し              |
+| `user_id` / `agent_id` / `tier` / `external_session` tuple | single-tenant + `project_tag` に倒す           |
+
+### C. tsumugi に未実装、Phase 4 着手前に追加が必要 ⚠️
+
+これが cutover 計画上の **本当の障害物**。優先度別に列挙。
+
+#### 高 (cutover 必須)
+
+| 不足機能                            | 理由                                                          |
+| ----------------------------------- | ------------------------------------------------------------- |
+| MemoryHistory + rollback            | yui で実運用機能。`/memories/history` と `/rollback` が落ちる |
+| user mute (`/me/memory-summary` 系) | 「自分の記憶を黙らせる」UI が消える                           |
+| GET observation by id (REST/MCP)    | 直リンク・provenance trace に必須                             |
+
+#### 中 (cutover 直後でも追加可、UX 悪化あり)
+
+| 不足機能                                                    | 理由                                           |
+| ----------------------------------------------------------- | ---------------------------------------------- |
+| `list_observations` の filter (kind / source / archived 等) | UI の絞り込みが死ぬ                            |
+| search の recency 軸 (`composite_score`)                    | yui の体感 ranking と差が出る                  |
+| `get_timeline_around` (前後 N 時間)                         | チャット時系列 UI が組めない                   |
+| `upsert_session_summary` + session summary worker           | yui 固有「セッション要約」概念を残すかの判断要 |
+| TTL archive job (source 別保持期間)                         | DB 無限肥大                                    |
+| retention purge (低 retention_score の archive)             | 同上                                           |
+
+#### 低 (後追いで OK)
+
+| 不足機能                                     | 理由                   |
+| -------------------------------------------- | ---------------------- |
+| `aggregate_ingestion` (日次ソース別 metrics) | admin dashboard 系数値 |
+
+### D. tsumugi にだけある (cutover で得られる)
+
+- `decision-contradiction` (dreaming job)
+- `AUDN judge` (job 化)
+- **LLM quarantine** (連続失敗で記憶を隔離)
+- 明示的 **Link** テーブルによる provenance graph
+
+### 追加方針
+
+「高」3 件は Phase 4 cutover の前提として **tsumugi 側 PR を先に出す**:
+
+- MemoryHistory schema + audit / rollback REST
+- user mute API (single-tenant でも「自分の記憶を黙らせる」概念は残す)
+- GET /observations/:id + MCP `get_observation`
+
+「中」のうち `list_observations` filter と recency 軸は cutover 前に
+入れた方が UX 連続性が保てる。残り (TTL / retention / session summary
+/ timeline) は cutover 後に追加で問題ない。
+
+「session summary」概念は yui 固有の負債色が強いため、cutover で
+「廃止」も選択肢。判断は Step 2-3 で yui の呼出箇所を見てから決める。
+
 ## 進行ステップ
 
-| Step | 内容                                                              | 想定工数   |
-| ---- | ----------------------------------------------------------------- | ---------- |
-| 1    | このADR                                                           | 30 分      |
-| 2    | yui の memory 層 API surface 調査、呼出箇所一覧化                 | 1-2 時間   |
-| 3    | yui に Python MCP client を導入、tsumugi 疎通確認                 | 半日       |
-| 4    | yui memory_service の adapter 実装 (interface 維持、内部実装置換) | 1-2 日     |
-| 5    | データ移行スクリプト整備 (eval/seed-from-yui.ts を発展)           | 半日       |
-| 6    | DB snapshot → 移行実行 → cutover                                  | 半日       |
-| 7    | 1 週間観察                                                        | (経過待ち) |
-| 8    | yui コード削除 + DB テーブル drop                                 | 半日       |
+| Step | 内容                                                                              | 想定工数   |
+| ---- | --------------------------------------------------------------------------------- | ---------- | --------------------------- |
+| Step | 内容                                                                              | 想定工数   | 状態                        |
+| ---- | -----------------------------------------------------------------------------     | ---------- | ----                        |
+| 1    | このADR                                                                           | 30 分      | ✅                          |
+| 2    | yui の memory 層 API surface 調査、呼出箇所一覧化                                 | 1-2 時間   | ✅ (2026-06-16)             |
+| 2.5  | **tsumugi 側 gap 補填 PR** (MemoryHistory + rollback / user mute / GET obs by id) | 1-2 日     | ⏳                          |
+| 2.6  | tsumugi 側 中優先 gap (list_observations filter / search recency 軸)              | 半日       | ⏳                          |
+| 3    | yui に Python MCP client を導入、tsumugi 疎通確認                                 | 半日       | ⏳                          |
+| 4    | yui memory_service の adapter 実装 (interface 維持、内部実装置換)                 | 1-2 日     | ⏳                          |
+| 5    | データ移行スクリプト整備 (eval/seed-from-yui.ts を発展)                           | 半日       | ✅ (PR #17 / #21)           |
+| 6    | DB snapshot → 移行実行 → cutover                                                  | 半日       | 🟡 移行のみ完了、cutover 未 |
+| 7    | 1 週間観察                                                                        | (経過待ち) | ⏳                          |
+| 8    | yui コード削除 + DB テーブル drop                                                 | 半日       | ⏳                          |
 
-合計 **4-6 日**の実作業 + **1 週間**の安定観察期間。
+Step 2.5 / 2.6 は API surface ギャップ分析 (上記セクション C) で
+洗い出した tsumugi 側の不足機能を Step 4 の前に埋めるため新設。
+
+合計 **6-8 日**の実作業 + **1 週間**の安定観察期間
+(gap 補填の Step 2.5 / 2.6 で初版見積 4-6 日から増加)。
 
 ## 検証
 
