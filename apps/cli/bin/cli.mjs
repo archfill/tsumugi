@@ -48,6 +48,7 @@ const claudePluginSourceDir = () =>
   join(claudeMarketplaceCloneDir(), CLAUDE_PLUGIN_SOURCE_SUBDIR);
 
 const codexDir = () => env.CODEX_HOME || join(homedir(), ".codex");
+const codexConfigPath = () => join(codexDir(), "config.toml");
 const codexMarketplaceCloneDir = () =>
   join(codexDir(), "plugins", "marketplaces", MARKETPLACE_NAME);
 const codexPluginSourceDir = () =>
@@ -146,14 +147,18 @@ function readJsonSafe(path, fallback) {
   }
 }
 
-function writeJsonAtomic(path, value) {
+function writeAtomic(path, contents, suffix = "") {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = join(
     tmpdir(),
-    `tsumugi-cli-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+    `tsumugi-cli-${Date.now()}-${Math.random().toString(36).slice(2)}${suffix}`,
   );
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", "utf-8");
+  writeFileSync(tmp, contents, "utf-8");
   renameSync(tmp, path);
+}
+
+function writeJsonAtomic(path, value) {
+  writeAtomic(path, JSON.stringify(value, null, 2) + "\n", ".json");
 }
 
 function ensureDir(path) {
@@ -323,6 +328,76 @@ async function registerCodexMarketplace(marketplaceRoot) {
   });
 }
 
+/**
+ * Render a `[mcp_servers.tsumugi]` section as TOML. Mirrors the literal-URL
+ * style Codex uses for its built-in HTTP MCP entries (see e.g. mcp_servers.yui).
+ */
+function renderCodexTsumugiSection(url) {
+  return [
+    `[mcp_servers.${PLUGIN_ID}]`,
+    `url = "${url}/mcp"`,
+    `startup_timeout_sec = 20`,
+    `tool_timeout_sec = 60`,
+  ].join("\n");
+}
+
+/**
+ * Idempotently write `[mcp_servers.tsumugi]` to ~/.codex/config.toml.
+ *
+ * Codex's config is TOML, not JSON. To avoid a TOML parser dependency while
+ * still being safe, we do line-based section editing:
+ *
+ *   - If `[mcp_servers.tsumugi]` already exists, replace the contiguous block
+ *     of `key = value` lines that follow it until the next `[section]` or EOF.
+ *   - Otherwise append a fresh section at the end of the file.
+ *
+ * Comments and unrelated sections are preserved.
+ */
+function configureCodexMcp(url) {
+  const path = codexConfigPath();
+  const section = renderCodexTsumugiSection(url);
+  const sectionHeader = `[mcp_servers.${PLUGIN_ID}]`;
+
+  if (!existsSync(path)) {
+    ensureDir(dirname(path));
+    writeAtomic(path, section + "\n");
+    return "created";
+  }
+
+  const text = readFileSync(path, "utf-8");
+  const lines = text.split("\n");
+
+  // Find the existing [mcp_servers.tsumugi] line.
+  const headerIdx = lines.findIndex((l) => l.trim() === sectionHeader);
+
+  if (headerIdx === -1) {
+    // No existing section — append.
+    const sep = text.endsWith("\n") || text.length === 0 ? "" : "\n";
+    writeAtomic(path, text + sep + "\n" + section + "\n");
+    return "appended";
+  }
+
+  // Replace the contiguous block (header + body) until the next [section] or EOF.
+  let endIdx = lines.length;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (/^\s*\[/.test(lines[i])) {
+      endIdx = i;
+      break;
+    }
+  }
+  // Drop a trailing blank line right before the next section so we don't grow
+  // double blanks on every reinstall.
+  while (endIdx > headerIdx + 1 && lines[endIdx - 1].trim() === "") {
+    endIdx--;
+  }
+
+  const before = lines.slice(0, headerIdx);
+  const after = lines.slice(endIdx);
+  const merged = [...before, ...section.split("\n"), ...after].join("\n");
+  writeAtomic(path, merged.endsWith("\n") ? merged : merged + "\n");
+  return "updated";
+}
+
 // ---------------------------------------------------------------------------
 // Credentials
 // ---------------------------------------------------------------------------
@@ -471,6 +546,13 @@ async function runInstall(rest) {
           "Codex marketplace cloned but not registered — run `codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill` after installing Codex",
       });
     }
+    tasks.push({
+      title: "Configuring Codex MCP server entry",
+      task: async () => {
+        const verb = configureCodexMcp(url);
+        return `Codex config.toml ${verb} (mcp_servers.${PLUGIN_ID} → ${url}/mcp)`;
+      },
+    });
   }
 
   tasks.push({
@@ -498,12 +580,8 @@ async function runInstall(rest) {
   }
   if (installCodex) {
     lines.push(
-      `  ${pc.cyan("Codex")}: export ${pc.yellow("TSUMUGI_API_URL")} in the shell that launches \`codex\` (e.g. add to ~/.zshrc):`,
+      `  ${pc.cyan("Codex")}: restart Codex (or open a fresh session) to pick up the tsumugi MCP server.`,
     );
-    lines.push(`     export TSUMUGI_API_URL=${url}`);
-    if (isCodexCliAvailable()) {
-      lines.push(`     then restart Codex to pick up the marketplace.`);
-    }
   }
   lines.push("");
   lines.push(pc.dim("Settings written:"));
@@ -516,6 +594,9 @@ async function runInstall(rest) {
   }
   if (installCodex) {
     lines.push(`  codex source:  ${codexMarketplaceCloneDir()}`);
+    lines.push(
+      `  codex config:  ${codexConfigPath()} (mcp_servers.${PLUGIN_ID})`,
+    );
   }
   lines.push(`  credentials:   ${credentialsPath()}`);
   lines.push("");
