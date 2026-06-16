@@ -1,16 +1,16 @@
 {
-  "name": "@archfill/tsumugi-setup",
+  "name": "@archfill/tsumugi-cli",
   "version": "0.1.0",
-  "description": "Interactive setup CLI for tsumugi Claude Code plugin. Configures TSUMUGI_API_URL, registers marketplace + plugin in Claude Code, and writes credentials in one command.",
+  "description": "CLI for the tsumugi Claude Code plugin — install / manage / diagnose your tsumugi setup in one command.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "archfill",
   "repository": {
     "type": "git",
     "url": "https://github.com/archfill/tsumugi",
-    "directory": "apps/setup-cli"
+    "directory": "apps/cli"
   },
-  "homepage": "https://github.com/archfill/tsumugi/tree/main/apps/setup-cli",
+  "homepage": "https://github.com/archfill/tsumugi/tree/main/apps/cli",
   "bugs": {
     "url": "https://github.com/archfill/tsumugi/issues"
   },
@@ -18,12 +18,11 @@
     "tsumugi",
     "claude-code",
     "plugin",
-    "setup",
-    "installer",
-    "cli"
+    "cli",
+    "installer"
   ],
   "bin": {
-    "tsumugi-setup": "./bin/setup.mjs"
+    "tsumugi-cli": "./bin/cli.mjs"
   },
   "files": [
     "bin",
@@ -33,7 +32,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "typecheck": "node --check bin/setup.mjs",
+    "typecheck": "node --check bin/cli.mjs",
     "test": "echo 'no tests yet'",
     "build": "echo 'no build step (plain mjs)'"
   }

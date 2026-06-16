@@ -39,7 +39,7 @@ agent はこれを通じて以下の MCP tool を呼べる:
 ### 推奨: npx 一発インストール
 
 ```bash
-npx @archfill/tsumugi-setup
+npx @archfill/tsumugi-cli install
 ```
 
 対話で tsumugi server URL を聞かれるので入力するだけ。以下を自動で設定:
@@ -52,10 +52,10 @@ npx @archfill/tsumugi-setup
 非対話オプション:
 
 ```bash
-npx @archfill/tsumugi-setup -u https://tsumugi.archfill.com -y
+npx @archfill/tsumugi-cli install -u https://tsumugi.example.com -y
 ```
 
-詳細は [`@archfill/tsumugi-setup` README](../../apps/setup-cli/README.md) を参照。
+将来サブコマンド (`doctor` / `update` / `uninstall` / `status` 等) を追加できるよう、CLI として汎用化している。詳細は [`@archfill/tsumugi-cli` README](../../apps/cli/README.md) を参照。
 
 ### 手動インストール (代替)
 
@@ -72,7 +72,7 @@ npx @archfill/tsumugi-setup -u https://tsumugi.archfill.com -y
 
    ```bash
    # A. 環境変数
-   export TSUMUGI_API_URL=https://tsumugi.archfill.com
+   export TSUMUGI_API_URL=https://tsumugi.example.com
    ```
 
    または
@@ -80,7 +80,7 @@ npx @archfill/tsumugi-setup -u https://tsumugi.archfill.com -y
    ```bash
    # B. credentials ファイル
    mkdir -p ~/.config/tsumugi && cat > ~/.config/tsumugi/credentials.json <<EOF
-   { "api_url": "https://tsumugi.archfill.com" }
+   { "api_url": "https://tsumugi.example.com" }
    EOF
    ```
 

@@ -1,22 +1,24 @@
 #!/usr/bin/env node
 /**
- * @archfill/tsumugi-setup
+ * @archfill/tsumugi-cli
  *
- * One-command installer for the tsumugi Claude Code plugin.
+ * CLI for the tsumugi Claude Code plugin.
  *
- * What it does:
- *   1. Prompts for TSUMUGI_API_URL (interactive) or accepts --url flag
- *   2. Clones / updates archfill/tsumugi at the Claude marketplace path
- *   3. Registers the marketplace in ~/.claude/plugins/known_marketplaces.json
- *   4. Registers the plugin in  ~/.claude/plugins/installed_plugins.json
- *   5. Enables the plugin in    ~/.claude/settings.json
- *   6. Writes credentials to    ~/.config/tsumugi/credentials.json
+ * Subcommands:
+ *   install  — Register marketplace + plugin, write credentials, enable hooks (default)
+ *   doctor   — (planned) Diagnose the local setup
+ *   update   — (planned) Pull marketplace updates
+ *   uninstall — (planned) Remove the plugin
+ *
+ * Usage:
+ *   npx @archfill/tsumugi-cli install
+ *   npx @archfill/tsumugi-cli install --url https://tsumugi.example.com --non-interactive
  *
  * Zero npm dependencies — uses only Node built-ins.
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { argv, env, exit, stdin, stdout } from "node:process";
@@ -45,18 +47,35 @@ const credentialsPath = () =>
   join(homedir(), ".config", "tsumugi", "credentials.json");
 
 // ---------------------------------------------------------------------------
-// CLI args
+// Top-level CLI dispatcher
 // ---------------------------------------------------------------------------
 
-function parseArgs() {
-  const args = argv.slice(2);
+function printRootHelp() {
+  console.log(`tsumugi-cli — Claude Code plugin management
+
+Usage:
+  npx @archfill/tsumugi-cli <command> [options]
+  npx @archfill/tsumugi-cli            # defaults to 'install'
+
+Commands:
+  install     Register marketplace + plugin and write credentials
+  help        Show help for a command
+
+Options shared by every command:
+  -h, --help   Show help
+
+Run 'tsumugi-cli <command> --help' for command-specific options.
+`);
+}
+
+function parseInstallArgs(rest) {
   let url;
   let nonInteractive = false;
   let force = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
     if (a === "--url" || a === "-u") {
-      url = args[++i];
+      url = rest[++i];
     } else if (a.startsWith("--url=")) {
       url = a.slice("--url=".length);
     } else if (a === "--non-interactive" || a === "-y") {
@@ -64,33 +83,33 @@ function parseArgs() {
     } else if (a === "--force" || a === "-f") {
       force = true;
     } else if (a === "--help" || a === "-h") {
-      printHelp();
+      printInstallHelp();
       exit(0);
     } else {
       console.error(`Unknown argument: ${a}`);
-      printHelp();
+      printInstallHelp();
       exit(1);
     }
   }
   return { url, nonInteractive, force };
 }
 
-function printHelp() {
-  console.log(`tsumugi-setup — Claude Code plugin installer
+function printInstallHelp() {
+  console.log(`tsumugi-cli install — Set up the tsumugi Claude Code plugin
 
 Usage:
-  npx @archfill/tsumugi-setup [options]
+  npx @archfill/tsumugi-cli install [options]
 
 Options:
-  -u, --url <URL>          tsumugi server URL (e.g. https://tsumugi.archfill.com)
+  -u, --url <URL>          tsumugi server URL (e.g. https://tsumugi.example.com)
   -y, --non-interactive    Skip prompts (requires --url)
   -f, --force              Re-clone marketplace even if it already exists
   -h, --help               Show this help
 
 Examples:
-  npx @archfill/tsumugi-setup
-  npx @archfill/tsumugi-setup --url https://tsumugi.archfill.com
-  npx @archfill/tsumugi-setup -u https://tsumugi.example.com -y
+  npx @archfill/tsumugi-cli install
+  npx @archfill/tsumugi-cli install --url https://tsumugi.example.com
+  npx @archfill/tsumugi-cli install -u https://tsumugi.example.com -y
 `);
 }
 
@@ -111,7 +130,7 @@ function writeJsonAtomic(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = join(
     tmpdir(),
-    `tsumugi-setup-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+    `tsumugi-cli-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
   );
   writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", "utf-8");
   renameSync(tmp, path);
@@ -154,7 +173,7 @@ function normalizeUrl(raw) {
 }
 
 // ---------------------------------------------------------------------------
-// Steps
+// Install command
 // ---------------------------------------------------------------------------
 
 async function promptUrl(initial) {
@@ -170,7 +189,7 @@ async function promptUrl(initial) {
   try {
     while (true) {
       const answer = await rl.question(
-        "tsumugi server URL (e.g. https://tsumugi.archfill.com): ",
+        "tsumugi server URL (e.g. https://tsumugi.example.com): ",
       );
       const normalized = normalizeUrl(answer);
       if (normalized) return normalized;
@@ -254,13 +273,9 @@ function writeCredentials(url) {
   console.log(`✓ wrote credentials to ${credentialsPath()}`);
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-async function main() {
-  const opts = parseArgs();
-  console.log("\ntsumugi setup\n=============");
+async function runInstall(rest) {
+  const opts = parseInstallArgs(rest);
+  console.log("\ntsumugi-cli install\n===================");
 
   if (opts.nonInteractive && !opts.url) {
     console.error("--non-interactive requires --url");
@@ -294,7 +309,7 @@ async function main() {
   writeCredentials(url);
 
   console.log(`
-✓ tsumugi setup complete!
+✓ tsumugi-cli install complete!
 
 Next:
   1. Restart Claude Code (or close and reopen the project) so the new
@@ -312,6 +327,45 @@ Settings:
 For more details see:
   https://github.com/archfill/tsumugi/tree/main/integrations/claude-code
 `);
+}
+
+// ---------------------------------------------------------------------------
+// Dispatcher
+// ---------------------------------------------------------------------------
+
+async function main() {
+  const args = argv.slice(2);
+  const firstArg = args[0];
+
+  // No subcommand, or first arg is an option → default to install
+  if (!firstArg || firstArg.startsWith("-")) {
+    if (firstArg === "-h" || firstArg === "--help") {
+      printRootHelp();
+      exit(0);
+    }
+    await runInstall(args);
+    return;
+  }
+
+  const cmd = firstArg;
+  const rest = args.slice(1);
+
+  switch (cmd) {
+    case "install":
+      await runInstall(rest);
+      break;
+    case "help":
+      if (rest[0] === "install") {
+        printInstallHelp();
+      } else {
+        printRootHelp();
+      }
+      break;
+    default:
+      console.error(`Unknown command: ${cmd}`);
+      printRootHelp();
+      exit(1);
+  }
 }
 
 main().catch((e) => {
