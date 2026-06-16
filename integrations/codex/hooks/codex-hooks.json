@@ -1,0 +1,40 @@
+{
+  "description": "tsumugi memory integration hooks for Codex — inject-only, no observation creation. Reuses the shared Python scripts in integrations/shared/scripts/.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${PLUGIN_ROOT}/../shared/scripts/session_start.py",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${PLUGIN_ROOT}/../shared/scripts/user_prompt_submit.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${PLUGIN_ROOT}/../shared/scripts/pre_tool_use_read.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

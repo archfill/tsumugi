@@ -1,5 +1,5 @@
 {
-  "description": "tsumugi memory integration hooks — inject-only, no observation creation",
+  "description": "tsumugi memory integration hooks for Claude Code — inject-only, no observation creation. Python scripts live in integrations/shared/scripts/ and are reused by the Codex variant.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_start.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/../shared/scripts/session_start.py",
             "timeout": 8
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/user_prompt_submit.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/../shared/scripts/user_prompt_submit.py",
             "timeout": 5
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pre_tool_use_read.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/../shared/scripts/pre_tool_use_read.py",
             "timeout": 5
           }
         ]

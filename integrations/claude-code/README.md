@@ -2,6 +2,8 @@
 
 Claude Code 用 tsumugi メモリ統合。**inject-only hook 3 本**で「過去 memory の再注入」と「save_observation のガイダンス」を agent に渡す。観測作成は **agent 自身が MCP tool で呼ぶ** (ADR-011)。
 
+Python script の実体は [`integrations/shared/scripts/`](../shared/scripts/) に置かれ、[Codex 版](../codex/README.md) と完全に共有している。
+
 ## なぜこの設計か
 
 詳細は [`docs/adr/0011-hook-llm-placement.md`](../../docs/adr/0011-hook-llm-placement.md) 参照。要約:
