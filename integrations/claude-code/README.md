@@ -36,37 +36,55 @@ agent はこれを通じて以下の MCP tool を呼べる:
 
 ## インストール
 
-### 1. Marketplace plugin として install
-
-```
-/plugin marketplace add archfill/tsumugi
-/plugin install tsumugi@archfill
-```
-
-### 2. tsumugi サーバ接続情報を設定
-
-以下のいずれかの方法で設定:
-
-#### A. 環境変数
+### 推奨: npx 一発インストール
 
 ```bash
-export TSUMUGI_API_URL=https://tsumugi.archfill.com
-# 任意 (tsumugi が認証を要求する場合のみ)
-export TSUMUGI_API_KEY=...
+npx @archfill/tsumugi-setup
 ```
 
-#### B. credentials ファイル
+対話で tsumugi server URL を聞かれるので入力するだけ。以下を自動で設定:
 
-`~/.config/tsumugi/credentials.json`:
+- marketplace 登録 (`~/.claude/plugins/known_marketplaces.json`)
+- plugin install 登録 (`~/.claude/plugins/installed_plugins.json`)
+- settings.json の enabledPlugins (`~/.claude/settings.json`)
+- credentials (`~/.config/tsumugi/credentials.json`)
 
-```json
-{
-  "api_url": "https://tsumugi.archfill.com",
-  "api_key": ""
-}
+非対話オプション:
+
+```bash
+npx @archfill/tsumugi-setup -u https://tsumugi.archfill.com -y
 ```
 
-`api_key` は空文字 / 省略可。tsumugi server がリバースプロキシ側で IP / VPN 制限を行う設計を前提とした optional 認証。
+詳細は [`@archfill/tsumugi-setup` README](../../apps/setup-cli/README.md) を参照。
+
+### 手動インストール (代替)
+
+`npx` を使いたくない場合:
+
+1. Claude Code で marketplace と plugin を登録
+
+   ```text
+   /plugin marketplace add archfill/tsumugi
+   /plugin install tsumugi@archfill
+   ```
+
+2. tsumugi サーバ接続情報を設定 (どちらか一方)
+
+   ```bash
+   # A. 環境変数
+   export TSUMUGI_API_URL=https://tsumugi.archfill.com
+   ```
+
+   または
+
+   ```bash
+   # B. credentials ファイル
+   mkdir -p ~/.config/tsumugi && cat > ~/.config/tsumugi/credentials.json <<EOF
+   { "api_url": "https://tsumugi.archfill.com" }
+   EOF
+   ```
+
+`TSUMUGI_API_KEY` は tsumugi server が認証を要求する場合のみ設定 (tsumugi はリバースプロキシ側で IP / VPN 制限する設計を前提とした optional 認証)。
 
 ### 3. 確認
 
