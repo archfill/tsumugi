@@ -11,7 +11,9 @@ Claude Code 用 tsumugi メモリ統合。**inject-only hook 3 本**で「過去
 - **agent の既存 LLM セッションに rubric + 検索結果を inject** することで、agent 主導の `save_observation` 呼出を促す
 - **inject 3 本**: SessionStart / UserPromptSubmit / PreToolUse(Read)
 
-## 含まれる hook
+## 含まれるもの
+
+### Hook (3 本、全部 inject-only)
 
 | Hook               | matcher                   | 役割                                                                           |
 | ------------------ | ------------------------- | ------------------------------------------------------------------------------ |
@@ -20,6 +22,17 @@ Claude Code 用 tsumugi メモリ統合。**inject-only hook 3 本**で「過去
 | `PreToolUse`       | `Read`                    | 開いたファイル名で `search_memory` → 関連 memory を inject                     |
 
 いずれも観測 (observation) を**作成しない**。
+
+### MCP server (`save_observation` / `search_memory` 等)
+
+plugin に `.mcp.json` を同梱しているため、`/plugin install` 時に **tsumugi MCP server が自動登録**される。エンドポイントは `${TSUMUGI_API_URL}/mcp` (HTTP Streamable transport)。
+
+agent はこれを通じて以下の MCP tool を呼べる:
+
+- `save_observation` — Layer 1 へ観測を保存 (rubric の呼出先)
+- `search_memory` — Layer 1 + Layer 2 を hybrid 検索
+- `trigger_dreaming` — Layer 2 synthesize を手動起動
+- `get_dreaming_status` — dreaming 履歴の取得
 
 ## インストール
 
