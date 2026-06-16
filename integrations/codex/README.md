@@ -58,6 +58,19 @@ npx @archfill/tsumugi-cli install --platform=both
 
 詳細は [`@archfill/tsumugi-cli` README](../../apps/cli/README.md)。
 
+### ⚠ Codex の hook trust 承認
+
+Codex は plugin-bundled hooks (bundled `hooks/hooks.json` の hook 群) を **手動 trust 承認後**にしか実行しません。install 直後の初回 session で SessionStart / UserPromptSubmit / PreToolUse(Read) の trust プロンプトが順次出るので、それぞれ approve してください。
+
+trust 承認後の状態は `~/.codex/config.toml` の以下のセクションで確認できます。
+
+```toml
+[hooks.state."tsumugi@archfill:hooks/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:..."
+```
+
+参照: [OpenAI Codex Hooks: Plugin-bundled hooks](https://developers.openai.com/codex/hooks#plugin-bundled-hooks)
+
 ### 手動インストール (代替)
 
 1. このリポを Codex marketplace ディレクトリに clone
