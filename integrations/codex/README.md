@@ -67,17 +67,29 @@ npx @archfill/tsumugi-cli install --platform=both
    git clone https://github.com/archfill/tsumugi ~/.codex/plugins/marketplaces/archfill
    ```
 
-2. Codex CLI で marketplace を登録
+2. Codex CLI で marketplace 登録 + plugin install
 
    ```bash
    codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill
+   codex plugin add tsumugi@archfill
    ```
 
-3. tsumugi server URL を設定
+   `codex plugin marketplace add` だけだと `[plugins."tsumugi@archfill"]` セクションに `enabled = true` が立たず hook が読み込まれない。`codex plugin add` まで実行して初めて plugin が有効化される。
+
+3. tsumugi MCP server を `~/.codex/config.toml` に追加 (任意・推奨)
+
+   ```toml
+   [mcp_servers.tsumugi]
+   url = "https://tsumugi.example.com/mcp"
+   startup_timeout_sec = 20
+   tool_timeout_sec = 60
+   ```
+
+   `npx @archfill/tsumugi-cli install` を使えばこの追記は自動で行われる。
+
+4. tsumugi server URL を credentials ファイルにも保存 (hook script が使う)
 
    ```bash
-   export TSUMUGI_API_URL=https://tsumugi.example.com
-   # または
    mkdir -p ~/.config/tsumugi && cat > ~/.config/tsumugi/credentials.json <<EOF
    { "api_url": "https://tsumugi.example.com" }
    EOF

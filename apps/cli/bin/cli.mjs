@@ -296,36 +296,49 @@ function isCodexCliAvailable() {
   return commandExists("codex");
 }
 
-async function registerCodexMarketplace(marketplaceRoot) {
-  // codex CLI handles marketplace registration. If unavailable, caller falls back
-  // to manual instructions.
+function runCodex(args, { allowedErrorPatterns = [] } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      "codex",
-      ["plugin", "marketplace", "add", marketplaceRoot],
-      { stdio: "pipe" },
-    );
+    const child = spawn("codex", args, { stdio: "pipe" });
     let stderr = "";
     if (child.stderr) child.stderr.on("data", (d) => (stderr += d.toString()));
     child.on("error", reject);
     child.on("exit", (code) => {
-      if (code === 0) {
-        resolve();
-      } else if (
-        /already added/i.test(stderr) ||
-        /different source/i.test(stderr)
-      ) {
-        // Treat re-registration as benign success
-        resolve();
-      } else {
-        reject(
-          new Error(
-            `codex plugin marketplace add failed with exit ${code}${stderr ? "\n" + stderr.trim() : ""}`,
-          ),
-        );
-      }
+      if (code === 0) return resolve();
+      if (allowedErrorPatterns.some((re) => re.test(stderr))) return resolve();
+      reject(
+        new Error(
+          `codex ${args.join(" ")} failed with exit ${code}${stderr ? "\n" + stderr.trim() : ""}`,
+        ),
+      );
     });
   });
+}
+
+async function registerCodexMarketplace(marketplaceRoot) {
+  // `codex plugin marketplace add` registers the marketplace. Re-running on an
+  // already-registered marketplace from the same source is benign — surface
+  // that as success.
+  await runCodex(["plugin", "marketplace", "add", marketplaceRoot], {
+    allowedErrorPatterns: [/already added/i, /different source/i],
+  });
+}
+
+async function installCodexPlugin() {
+  // `codex plugin add` is what actually flips
+  // `[plugins."tsumugi@archfill"] enabled = true` in config.toml. Without it,
+  // the marketplace entry is registered but hooks never load — which is the
+  // failure mode reported in the wild for v0.1.1 (PR #30 only configured the
+  // marketplace and the standalone MCP server entry).
+  await runCodex(
+    ["plugin", "add", `${PLUGIN_ID}@${MARKETPLACE_NAME}`],
+    {
+      allowedErrorPatterns: [
+        /already installed/i,
+        /already enabled/i,
+        /already present/i,
+      ],
+    },
+  );
 }
 
 /**
@@ -539,11 +552,18 @@ async function runInstall(rest) {
           return "Codex marketplace registered via `codex plugin marketplace add`";
         },
       });
+      tasks.push({
+        title: "Installing Codex plugin",
+        task: async () => {
+          await installCodexPlugin();
+          return `Codex plugin ${PLUGIN_ID}@${MARKETPLACE_NAME} installed and enabled via \`codex plugin add\``;
+        },
+      });
     } else {
       tasks.push({
         title: "Skipping Codex CLI registration (codex not on PATH)",
         task: async () =>
-          "Codex marketplace cloned but not registered — run `codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill` after installing Codex",
+          `Codex marketplace cloned but not registered — run \`codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill && codex plugin add ${PLUGIN_ID}@${MARKETPLACE_NAME}\` after installing Codex`,
       });
     }
     tasks.push({

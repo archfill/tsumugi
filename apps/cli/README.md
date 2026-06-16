@@ -58,19 +58,21 @@ npx @archfill/tsumugi-cli install -f
 
 ## What `install` writes
 
-| Platform    | Path                                         | Purpose                                 |
-| ----------- | -------------------------------------------- | --------------------------------------- |
-| Claude Code | `~/.claude/plugins/marketplaces/archfill/`   | Cloned `archfill/tsumugi` repo          |
-| Claude Code | `~/.claude/plugins/known_marketplaces.json`  | Registers the `archfill` marketplace    |
-| Claude Code | `~/.claude/plugins/installed_plugins.json`   | Registers the `tsumugi@archfill` plugin |
-| Claude Code | `~/.claude/settings.json` (`enabledPlugins`) | Enables the plugin                      |
-| Codex       | `~/.codex/plugins/marketplaces/archfill/`    | Cloned `archfill/tsumugi` repo          |
-| Codex       | (via `codex plugin marketplace add`)         | Registers marketplace with Codex CLI    |
-| Shared      | `~/.config/tsumugi/credentials.json`         | Stores the tsumugi server URL           |
+| Platform    | Path                                                | Purpose                                                 |
+| ----------- | --------------------------------------------------- | ------------------------------------------------------- |
+| Claude Code | `~/.claude/plugins/marketplaces/archfill/`          | Cloned `archfill/tsumugi` repo                          |
+| Claude Code | `~/.claude/plugins/known_marketplaces.json`         | Registers the `archfill` marketplace                    |
+| Claude Code | `~/.claude/plugins/installed_plugins.json`          | Registers the `tsumugi@archfill` plugin                 |
+| Claude Code | `~/.claude/settings.json` (`enabledPlugins`, `env`) | Enables the plugin and exports `TSUMUGI_API_URL`        |
+| Codex       | `~/.codex/plugins/marketplaces/archfill/`           | Cloned `archfill/tsumugi` repo                          |
+| Codex       | (via `codex plugin marketplace add`)                | Registers the marketplace with Codex CLI                |
+| Codex       | (via `codex plugin add tsumugi@archfill`)           | Installs and enables the plugin (sets `enabled = true`) |
+| Codex       | `~/.codex/config.toml` (`[mcp_servers.tsumugi]`)    | Registers the tsumugi MCP server with the literal URL   |
+| Shared      | `~/.config/tsumugi/credentials.json`                | Stores the tsumugi server URL                           |
 
 All writes are atomic (temp file + rename) and merge with existing values rather than overwriting.
 
-For Codex, registration is performed by spawning `codex plugin marketplace add <path>`. If the Codex CLI is not on `PATH`, the marketplace is cloned but registration is skipped with a hint to re-run after installing Codex.
+For Codex, the CLI runs `codex plugin marketplace add <path>` and `codex plugin add tsumugi@archfill` in sequence. If the Codex CLI is not on `PATH`, the marketplace is still cloned, and the CLI prints the two commands you should run after installing Codex.
 
 ## Plugin contents
 
@@ -97,6 +99,18 @@ If you prefer not to use this CLI, you can install the plugin manually.
 ```bash
 git clone https://github.com/archfill/tsumugi ~/.codex/plugins/marketplaces/archfill
 codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill
+codex plugin add tsumugi@archfill
+```
+
+`codex plugin marketplace add` だけだと `[plugins."tsumugi@archfill"]` セクションに `enabled = true` が立たず hook が読み込まれない。`codex plugin add` まで実行して plugin を install する。
+
+`[mcp_servers.tsumugi]` を `~/.codex/config.toml` に追記する場合 (CLI が自動でやる内容):
+
+```toml
+[mcp_servers.tsumugi]
+url = "https://tsumugi.example.com/mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
 ```
 
 ### Set the tsumugi server URL (both)
