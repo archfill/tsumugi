@@ -43,7 +43,15 @@ reflection, do not skip in principle.
 - The user's **durable** preferences / constraints / role (not one-off taste)
 
 ## Output for skip = false
-- facts: each fact is a single self-contained sentence (3–5 facts as a guide)
+- facts: each fact must be **self-contained including when / where / why
+  context** that the source observation carried (date, project, subsystem,
+  metric, identifier). Prefer **1–3 dense facts over 3–5 thin facts** —
+  splitting a single event into many context-thin sentences makes the memory
+  layer unusable for resume.
+  - bad:  "Noise was removed from Layer 1." (when? how many? why?)
+  - good: "On 2026-06-16, after the yui→tsumugi Phase 4 migration, 2,637
+          old-hook-derived noise observations (8,202 → 5,614) were removed
+          from Layer 1."
 - narrative: 1–2 sentence summary. Preserve searchable keywords (function names,
   code symbols, identifiers) verbatim
 
