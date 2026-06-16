@@ -267,12 +267,19 @@ function registerClaudePlugin() {
   writeJsonAtomic(installedPluginsPath(), installed);
 }
 
-function enableClaudePluginInSettings() {
+function enableClaudePluginInSettings(url) {
   const settings = readJsonSafe(claudeSettingsPath(), {});
   if (!settings.enabledPlugins || typeof settings.enabledPlugins !== "object") {
     settings.enabledPlugins = {};
   }
   settings.enabledPlugins[`${PLUGIN_ID}@${MARKETPLACE_NAME}`] = true;
+  // Propagate TSUMUGI_API_URL to Claude Code's process env so the MCP server
+  // entry's `${TSUMUGI_API_URL}/mcp` placeholder resolves. Without this, the
+  // MCP connection reports "Missing environment variables: TSUMUGI_API_URL".
+  if (url) {
+    if (!settings.env || typeof settings.env !== "object") settings.env = {};
+    settings.env.TSUMUGI_API_URL = url;
+  }
   writeJsonAtomic(claudeSettingsPath(), settings);
 }
 
@@ -431,8 +438,8 @@ async function runInstall(rest) {
         }
         registerClaudeMarketplace();
         registerClaudePlugin();
-        enableClaudePluginInSettings();
-        return "Claude Code plugin registered and enabled";
+        enableClaudePluginInSettings(url);
+        return "Claude Code plugin registered, enabled, and TSUMUGI_API_URL exported via settings.json env";
       },
     });
   }
@@ -485,17 +492,27 @@ async function runInstall(rest) {
 
   const lines = ["", pc.dim("Next steps:")];
   if (installClaude) {
-    lines.push(`  ${pc.cyan("Claude Code")}: restart Claude Code so the new plugin is picked up.`);
+    lines.push(
+      `  ${pc.cyan("Claude Code")}: restart Claude Code so the new plugin and TSUMUGI_API_URL env are picked up.`,
+    );
   }
-  if (installCodex && isCodexCliAvailable()) {
-    lines.push(`  ${pc.cyan("Codex")}: restart Codex (or open a fresh session) to pick up the marketplace.`);
+  if (installCodex) {
+    lines.push(
+      `  ${pc.cyan("Codex")}: export ${pc.yellow("TSUMUGI_API_URL")} in the shell that launches \`codex\` (e.g. add to ~/.zshrc):`,
+    );
+    lines.push(`     export TSUMUGI_API_URL=${url}`);
+    if (isCodexCliAvailable()) {
+      lines.push(`     then restart Codex to pick up the marketplace.`);
+    }
   }
   lines.push("");
   lines.push(pc.dim("Settings written:"));
   if (installClaude) {
     lines.push(`  marketplace:   ${knownMarketplacesPath()}`);
     lines.push(`  installed:     ${installedPluginsPath()}`);
-    lines.push(`  settings:      ${claudeSettingsPath()}`);
+    lines.push(
+      `  settings:      ${claudeSettingsPath()} (enabledPlugins + env.TSUMUGI_API_URL)`,
+    );
   }
   if (installCodex) {
     lines.push(`  codex source:  ${codexMarketplaceCloneDir()}`);
