@@ -1,0 +1,18 @@
+{
+  "name": "archfill",
+  "owner": {
+    "name": "archfill"
+  },
+  "metadata": {
+    "description": "Plugins by archfill",
+    "homepage": "https://github.com/archfill/tsumugi"
+  },
+  "plugins": [
+    {
+      "name": "tsumugi",
+      "version": "0.1.0",
+      "source": "./integrations/claude-code",
+      "description": "tsumugi memory integration for Claude Code — inject-only hooks for past memory recall and save guidance"
+    }
+  ]
+}
