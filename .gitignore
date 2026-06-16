@@ -52,3 +52,4 @@ apps/server/eval/results/
 
 # yui → tsumugi migration staging (private data)
 apps/server/scripts/yui-migration/staging/
+integrations/claude-code/scripts/__pycache__/

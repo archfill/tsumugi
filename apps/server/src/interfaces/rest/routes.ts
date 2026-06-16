@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runDreaming } from "../../core/dreaming/runner.js";
+import { hybridSearch } from "../../core/search/hybrid.js";
 import { decisionRepo } from "../../data/repos/decision.js";
 import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { linkRepo } from "../../data/repos/link.js";
@@ -83,6 +84,34 @@ restApp.get("/links", async (c) => {
     linkRepo.countAll(),
   ]);
   return c.json({ links, total });
+});
+
+restApp.get("/search", async (c) => {
+  const query = c.req.query("q");
+  if (!query) {
+    return c.json({ error: "query parameter 'q' is required" }, 400);
+  }
+  const limit = readLimit(c.req.query("limit"), 10, 50);
+  const projectTag = c.req.query("project_tag");
+  const type = c.req.query("type");
+  const source = c.req.query("source");
+  const sessionId = c.req.query("session_id");
+  const filter: Record<string, string> = {};
+  if (projectTag) filter["project_tag"] = projectTag;
+  if (type) filter["type"] = type;
+  if (source) filter["source"] = source;
+  if (sessionId) filter["session_id"] = sessionId;
+  try {
+    const hits = await hybridSearch({
+      query,
+      limit,
+      ...(Object.keys(filter).length > 0 ? { filter } : {}),
+    });
+    return c.json({ hits });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return c.json({ error: message }, 400);
+  }
 });
 
 restApp.post("/dreaming/trigger", async (c) => {

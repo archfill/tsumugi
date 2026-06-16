@@ -1,0 +1,18 @@
+{
+  "name": "tsumugi",
+  "version": "0.1.0",
+  "description": "tsumugi memory integration — 3 inject-only hooks (SessionStart, UserPromptSubmit, PreToolUse(Read)) that surface past memory and guide agent-driven save_observation calls. Does NOT create observations from raw tool output (avoiding the contamination problem documented in ADR-011).",
+  "author": {
+    "name": "archfill"
+  },
+  "repository": "https://github.com/archfill/tsumugi",
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude-code",
+    "memory",
+    "mcp",
+    "tsumugi",
+    "hooks",
+    "inject-only"
+  ]
+}
