@@ -32,6 +32,10 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {
     "@clack/prompts": "^1.5.1",
     "picocolors": "^1.1.1"
@@ -39,6 +43,8 @@
   "scripts": {
     "typecheck": "node --check bin/cli.mjs",
     "test": "echo 'no tests yet'",
-    "build": "echo 'no build step (plain mjs)'"
+    "build": "echo 'no build step (plain mjs)'",
+    "pack:dry": "npm pack --dry-run",
+    "prepublishOnly": "node --check bin/cli.mjs"
   }
 }
