@@ -66,6 +66,17 @@ judgement.
 Write new_narrative and reasoning in the same natural language as the inputs.
 Preserve code symbols / identifiers / English product names verbatim.
 
+## new_narrative density (ADD / UPDATE)
+new_narrative must remain **self-contained**: preserve when / where / why
+context (date, project, subsystem, metric, identifier) that the input fact
+carried. Compression is fine; context erosion is not. A memory that reads
+"X was changed" without the surrounding context cannot be reused by a future
+session.
+- bad:  "The noise filtering was specifically targeting the old hook system."
+- good: "On 2026-06-16, after the yui→tsumugi migration, the classifyNoise()
+        filter in extract.ts was hardened across PR #17 and #21 to drop
+        old-hook-derived noise (2,637 observations removed)."
+
 ## Output JSON
 {
   "decision": "ADD" | "UPDATE" | "DELETE" | "NOOP",
