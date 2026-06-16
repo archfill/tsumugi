@@ -602,6 +602,12 @@ async function runInstall(rest) {
     lines.push(
       `  ${pc.cyan("Codex")}: restart Codex (or open a fresh session) to pick up the tsumugi MCP server.`,
     );
+    lines.push(
+      `     ${pc.yellow("⚠")} On the first session, Codex will prompt to ${pc.bold("trust the bundled hooks")} (SessionStart / UserPromptSubmit / PreToolUse). Approve to enable them — until trusted, plugin hooks are skipped silently.`,
+    );
+    lines.push(
+      `     Docs: https://developers.openai.com/codex/hooks#plugin-bundled-hooks`,
+    );
   }
   lines.push("");
   lines.push(pc.dim("Settings written:"));
