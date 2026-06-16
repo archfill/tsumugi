@@ -1,0 +1,11 @@
+{
+  "name": "tsumugi",
+  "version": "0.1.0",
+  "description": "tsumugi memory integration for Codex — inject-only hooks for past memory recall and save_observation guidance. Same design as the Claude Code plugin (ADR-011), reusing shared Python scripts.",
+  "author": {
+    "name": "archfill"
+  },
+  "repository": "https://github.com/archfill/tsumugi",
+  "license": "Apache-2.0",
+  "keywords": ["codex", "memory", "mcp", "tsumugi", "hooks", "inject-only"]
+}

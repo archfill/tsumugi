@@ -1,7 +1,7 @@
 {
   "name": "@archfill/tsumugi-cli",
   "version": "0.1.0",
-  "description": "CLI for the tsumugi Claude Code plugin — install / manage / diagnose your tsumugi setup in one command.",
+  "description": "CLI for the tsumugi memory plugin (Claude Code & Codex) — install / manage / diagnose your tsumugi setup in one command.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "archfill",
@@ -17,6 +17,7 @@
   "keywords": [
     "tsumugi",
     "claude-code",
+    "codex",
     "plugin",
     "cli",
     "installer"
@@ -30,6 +31,10 @@
   ],
   "engines": {
     "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.5.1",
+    "picocolors": "^1.1.1"
   },
   "scripts": {
     "typecheck": "node --check bin/cli.mjs",
