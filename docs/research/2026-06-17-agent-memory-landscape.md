@@ -163,16 +163,68 @@ AgeMem 系 RL アプローチは tsumugi の現在の hand-tuned ルールから
 
 ## 5. 優先順位 (起案者所感)
 
-| #   | 項目                                                   | 推定コスト | 効果                              |
-| --- | ------------------------------------------------------ | ---------- | --------------------------------- |
-| 1   | provenance を `search_memory` レスポンスに surface (B) | 1-2 日     | 大 (コミュニティ評価軸に直接対応) |
-| 2   | `mark_memory_outdated` MCP tool (C)                    | 1 日       | 中 (agent が忘却を学習する第一歩) |
-| 3   | importance decay + access boost (A)                    | 3-5 日     | 中 (memory ranking の質改善)      |
-| 4   | Working memory 層検討 (D)                              | 大         | 不明 (Claude Code との分担次第)   |
-| 5   | UI (E)                                                 | 大         | 大 (採用判断要)                   |
-| 6   | RL CRUD (F)                                            | 観察       | -                                 |
+**2026-06-17 事後追記**: 同日午後の recall 実証テスト (§5.1) で、A の前提となる
+「ranking 質に問題がある」仮説が **否定** され、代わりに **G (auto project_tag
+filter) を新規最優先項目**として追加。優先順位を更新する。
 
-A-C を **ADR-013 として 1 本にまとめる**のが現実的。D-F は本 doc を根拠に必要時に別 ADR で起案する。
+| #   | 項目                                                   | 推定コスト | 効果                                       |
+| --- | ------------------------------------------------------ | ---------- | ------------------------------------------ |
+| 1   | **G**: auto project_tag filter (新規、§5.1 参照)       | 1 日       | **特大 (recall 失敗が filter のみで解消)** |
+| 2   | provenance を `search_memory` レスポンスに surface (B) | 1-2 日     | 大 (コミュニティ評価軸に直接対応)          |
+| 3   | `mark_memory_outdated` MCP tool (C)                    | 1 日       | 中 (agent が忘却を学習する第一歩)          |
+| 4   | importance decay + access boost (A)                    | 3-5 日     | **低** (§5.1 で必要性否定、observe へ)     |
+| 5   | Working memory 層検討 (D)                              | 大         | 不明 (Claude Code との分担次第)            |
+| 6   | UI (E)                                                 | 大         | 大 (採用判断要)                            |
+| 7   | RL CRUD (F)                                            | 観察       | -                                          |
+
+**G + B + C** を **ADR-013 として 1 本にまとめる**のが現実的 (推定 3-4 日)。
+A は当面観察ポジション、D-F は本 doc を根拠に必要時に別 ADR で起案する。
+
+### 5.1 recall 実証テスト (2026-06-17 午後)
+
+「正しく引けるか」を検証するため、今日のセッション中に保存した 14+4 件の
+observation を狙った 3 本の ピンポイント query を投げて hit を観測した。
+
+#### 第 1 ラウンド (filter なし)
+
+| query                                           | 期待 obs     | 実際の top hit                                | 結果    |
+| ----------------------------------------------- | ------------ | --------------------------------------------- | ------- |
+| "bench audn promote 並列 OpenAI 429 rate limit" | obs_4d952550 | obs_c755b1a3 (別 topic: PR #33 merge)         | ❌ 失敗 |
+| "save_observation 呼ばなかった failure"         | obs_0b547f6c | DecisionSummaryService キャッシュテスト (yui) | ❌ 失敗 |
+| "dreaming summarize AUDN 圧縮 context erosion"  | obs_25453d99 | Phase 11 dreaming consolidation (yui)         | ❌ 失敗 |
+
+全 query で top hit の score = **0.015-0.016** (RRF baseline 域、実質ランダム)。
+top hit に **他プロジェクト (yui, Lambda 系, mastermente 等) の obs が surface** していた。
+
+#### 第 2 ラウンド (`filter: {project_tag: "tsumugi"}` を追加)
+
+| query | 期待 obs     | 実際の top hit              | 結果    |
+| ----- | ------------ | --------------------------- | ------- |
+| 同上  | obs_4d952550 | **obs_4d952550** (期待通り) | ✅ 成功 |
+| 同上  | obs_0b547f6c | **obs_0b547f6c** (期待通り) | ✅ 成功 |
+| 同上  | obs_25453d99 | **obs_25453d99** (期待通り) | ✅ 成功 |
+
+3/3 で期待 obs が top hit。さらに top-5 すべてが当日 save した tsumugi obs で
+埋まる ideal な結果。
+
+#### 解釈
+
+- 問題は **cross-project corpus pollution**。archfill の corpus には複数プロジェクトの
+  obs が混在し、tsumugi 単独の最近 obs が大海に埋もれる
+- search_memory の **デフォルトが全プロジェクト horizontal** であることが直接の原因
+- BM25 / vector / RRF の ranking 本体は **正常動作**。filter 適用後の ranking は実用十分
+- 結果として **A (importance decay) の必要性は否定**。代わりに G (auto project_tag
+  filter) が 1 日でできる "特大効果" の改善として浮上
+
+#### 含意
+
+「正しく引けるか」への現状の答え:
+
+- filter なしの デフォルト動作 → **NO** (実用に耐えない)
+- filter ありの正しい呼び方 → **YES** (期待通り surface する)
+
+つまり **recall そのものは壊れていない**。MCP の呼び出し規約と server 側
+default の改善で実用ラインに乗る。これが ADR-013 の主題。
 
 ## 6. 直近の tsumugi 自決定との整合性
 
