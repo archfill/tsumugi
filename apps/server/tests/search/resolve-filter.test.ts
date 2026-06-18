@@ -42,8 +42,8 @@ describe("resolveSearchFilter (ADR-013 G)", () => {
     });
   });
 
-  describe("明示 project_tag = null → opt-out", () => {
-    it("null は filter から削除されて horizontal 検索になる", async () => {
+  describe("明示 project_tag = null → project_tag auto-fill opt-out", () => {
+    it("null は filter から削除され、session_id は維持される", async () => {
       const result = await resolveSearchFilter({
         project_tag: null,
         session_id: "sess_X",
@@ -56,7 +56,7 @@ describe("resolveSearchFilter (ADR-013 G)", () => {
       ).not.toHaveBeenCalled();
     });
 
-    it("null + 他フィルタなしでも空 filter として正常に処理", async () => {
+    it("null + 他フィルタなしなら空 filter として正常に処理", async () => {
       const result = await resolveSearchFilter({ project_tag: null });
 
       expect(result).toEqual({});

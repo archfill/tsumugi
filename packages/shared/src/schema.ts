@@ -34,7 +34,7 @@ export const SearchInput = z.object({
       session_id: z.string().optional(),
       // project_tag:
       //   - string  → そのプロジェクトに絞り込む
-      //   - null    → 明示的に opt-out (auto-fill されない、horizontal 検索)
+      //   - null    → project_tag 自動補完のみ opt-out (他 filter は維持)
       //   - 省略    → サーバー側 default (session 由来の project_tag があれば自動補完、ADR-013 G)
       project_tag: z.string().nullable().optional(),
     })

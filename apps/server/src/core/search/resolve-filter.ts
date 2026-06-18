@@ -9,7 +9,7 @@
  * 解決順序:
  *   1. filter.project_tag が **明示** (string OR null) → そのまま使う
  *      - string  → 通常のフィルタ
- *      - null    → 明示的に opt-out (horizontal 検索維持)
+ *      - null    → project_tag auto-fill の opt-out
  *   2. filter.project_tag が undefined && filter.session_id がある
  *      → observations から最新の project_tag を引いて補完
  *   3. どちらも未指定 → filter そのまま (現状維持) + WARN ログ
@@ -27,14 +27,15 @@ export type SearchFilter = NonNullable<SearchInput["filter"]>;
 
 /**
  * SearchInput.filter から hybridSearch に渡せる形に変換する。
- * project_tag が null の場合は filter から除去する (= 旧挙動 = horizontal 検索)。
+ * project_tag が null の場合は filter から除去する。
+ * session_id / source / type など他の filter は維持する。
  */
 export async function resolveSearchFilter(
   filter: SearchFilter | undefined,
 ): Promise<Omit<SearchFilter, "project_tag"> & { project_tag?: string }> {
   const f: SearchFilter = filter ? { ...filter } : {};
 
-  // 1. 明示的な opt-out (project_tag === null)
+  // 1. project_tag auto-fill の opt-out (project_tag === null)
   if (f.project_tag === null) {
     const { project_tag: _drop, ...rest } = f;
     void _drop;

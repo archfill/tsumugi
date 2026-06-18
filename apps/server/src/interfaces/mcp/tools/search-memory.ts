@@ -48,7 +48,7 @@ export const SEARCH_MEMORY_TOOL = {
           project_tag: {
             type: ["string", "null"],
             description:
-              "プロジェクトタグフィルタ (observations のみ有効)。string=その project に絞る。null=明示 opt-out (全プロジェクト horizontal)。省略=session_id があれば自動補完 (ADR-013 G)。",
+              "プロジェクトタグフィルタ (observations のみ有効)。string=その project に絞る。null=project_tag 自動補完のみ opt-out (他 filter は維持)。省略=session_id があれば自動補完 (ADR-013 G)。",
           },
         },
         additionalProperties: false,

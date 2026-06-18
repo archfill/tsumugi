@@ -98,8 +98,8 @@ restApp.get("/search", async (c) => {
   const source = c.req.query("source");
   const sessionId = c.req.query("session_id");
 
-  // ADR-013 G: REST 側でも opt-out (null) を表現できるよう特別値
-  //   ?project_tag=__null__  → 明示 opt-out
+  // ADR-013 G: REST 側でも project_tag auto-fill opt-out を表現できるよう特別値
+  //   ?project_tag=__null__  → project_tag 自動補完のみ opt-out (他 filter は維持)
   //   ?project_tag=foo       → 通常フィルタ
   //   (省略)                  → 自動補完 (session_id があれば)
   const projectTag =

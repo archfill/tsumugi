@@ -41,7 +41,7 @@ ROADMAP.md は「**何が決まっていて、次に何をすべきか**」を 1
 
 | 順  | ADR | 工数      | 内容                                                                         | 依存                      |
 | --- | --- | --------- | ---------------------------------------------------------------------------- | ------------------------- |
-| 1   | 013 | 3-4 日    | G: auto project_tag filter / B: provenance surface / C: mark_memory_outdated | 無し                      |
+| 1   | 013 | 3-4 日    | G: auto project_tag filter / B: provenance + project-aware memory retrieval / C: mark_memory_outdated | 無し                      |
 | 2   | 014 | ~1 sprint | captures schema / hook (Claude Code + Codex) / stepPromoteCaptures / sweep   | 無し (013 と並走可能)     |
 | 3   | 012 | 1 日      | PreToolUse(Bash) milestone save nudge                                        | ADR-014 後 (必要性再評価) |
 
