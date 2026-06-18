@@ -48,5 +48,15 @@ export const SearchHit = z.object({
   excerpt: z.string(),
   score: z.number(),
   tags: z.array(z.string()).default([]),
+  provenance: z
+    .array(
+      z.object({
+        layer: z.enum(["observation", "memory"]),
+        id: z.string(),
+        relation: z.enum(["derived_from", "supersedes", "related_to"]),
+        created_at: z.string(),
+      }),
+    )
+    .default([]),
 });
 export type SearchHit = z.infer<typeof SearchHit>;
