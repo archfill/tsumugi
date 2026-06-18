@@ -4,6 +4,17 @@ import { links } from "../schema.js";
 
 export type LinkRow = typeof links.$inferSelect;
 export type NewLinkRow = typeof links.$inferInsert;
+export type LinkRelation = "derived_from" | "supersedes" | "related_to";
+export type LinkLayer = "observation" | "memory";
+
+export interface SearchProvenanceRow extends Record<string, unknown> {
+  hit_id: string;
+  hit_layer: LinkLayer;
+  id: string;
+  layer: LinkLayer;
+  relation: LinkRelation;
+  created_at: Date;
+}
 
 export const linkRepo = {
   async insert(row: NewLinkRow): Promise<void> {
@@ -34,5 +45,88 @@ export const linkRepo = {
           eq(links.relation, relation),
         ),
       );
+  },
+  /**
+   * Return final SearchHit provenance in batch.
+   *
+   * Link direction is observation -> memory for derived_from. For memory hits,
+   * provenance points to incoming sources. For observation hits, provenance
+   * points to outgoing derived memories. created_at is the linked entity time,
+   * not link creation time.
+   */
+  async listSearchProvenance(params: {
+    observationIds: string[];
+    memoryIds: string[];
+  }): Promise<SearchProvenanceRow[]> {
+    const observationIds = params.observationIds;
+    const memoryIds = params.memoryIds;
+    if (observationIds.length === 0 && memoryIds.length === 0) return [];
+
+    const result = await db.execute<SearchProvenanceRow>(sql`
+      WITH hit_provenance AS (
+        SELECT
+          l.to_id AS hit_id,
+          l.to_layer AS hit_layer,
+          l.from_id AS id,
+          l.from_layer AS layer,
+          l.relation AS relation,
+          o.created_at AS created_at
+        FROM links l
+        JOIN observations o ON o.id = l.from_id
+        WHERE
+          ${memoryIds}::text[] <> '{}'::text[]
+          AND l.to_id = ANY(${memoryIds}::text[])
+          AND l.to_layer = 'memory'
+          AND l.from_layer = 'observation'
+
+        UNION ALL
+
+        SELECT
+          l.from_id AS hit_id,
+          l.from_layer AS hit_layer,
+          l.to_id AS id,
+          l.to_layer AS layer,
+          l.relation AS relation,
+          m.created_at AS created_at
+        FROM links l
+        JOIN memories m ON m.id = l.to_id
+        WHERE
+          ${observationIds}::text[] <> '{}'::text[]
+          AND l.from_id = ANY(${observationIds}::text[])
+          AND l.from_layer = 'observation'
+          AND l.to_layer = 'memory'
+      )
+      SELECT
+        hit_id,
+        hit_layer,
+        id,
+        layer,
+        relation,
+        created_at
+      FROM hit_provenance
+    `);
+    return result.rows;
+  },
+  /**
+   * Project-aware memory retrieval filter. Only derived_from observation links
+   * are treated as project ownership evidence.
+   */
+  async listMemoryIdsDerivedFromProject(
+    memoryIds: string[],
+    projectTag: string,
+  ): Promise<string[]> {
+    if (memoryIds.length === 0) return [];
+    const result = await db.execute<{ id: string }>(sql`
+      SELECT DISTINCT l.to_id AS id
+      FROM links l
+      JOIN observations o ON o.id = l.from_id
+      WHERE
+        l.to_id = ANY(${memoryIds}::text[])
+        AND l.to_layer = 'memory'
+        AND l.from_layer = 'observation'
+        AND l.relation = 'derived_from'
+        AND o.project_tag = ${projectTag}
+    `);
+    return result.rows.map((row) => row.id);
   },
 };
