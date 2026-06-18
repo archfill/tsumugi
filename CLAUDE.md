@@ -150,13 +150,26 @@ throw new ValidationError("content is required");
 
 ## 意思決定の背景
 
-詳細は `docs/adr/` を参照:
+ドキュメント階層:
 
-- ADR-001: 二層構造（Layer 1/2）採用
+| 媒体                                 | 役割                                                                |
+| ------------------------------------ | ------------------------------------------------------------------- |
+| [`docs/VISION.md`](docs/VISION.md)   | 上位の判断軸 (品質駆動、5 軸、原則、scope 外)                       |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **全 ADR の status と実装優先順位の俯瞰**。「次に何をするか」はここ |
+| `docs/adr/`                          | 個別の不変決定 (ADR)                                                |
+| `docs/research/`                     | 調査メモ、ADR 起案前の素材                                          |
+
+設計判断に影響しそうな実装をする前は、**`VISION.md` の 5 品質軸** (capture / recall /
+forgetting / transparency / continuity) を判断基準として参照する。
+
+主要 ADR (全一覧は `ROADMAP.md` 参照):
+
+- ADR-001: 二層構造 (ADR-014 で Three-layer に拡張予定)
 - ADR-002: pg_bigm + pgvector hybrid 検索
-- ADR-003: hot path LLM ゼロ（クライアント LLM 委譲）
-- ADR-004: TypeScript full-stack monorepo
-- ADR-005: PostgreSQL 18 + Drizzle ORM 採用
+- ADR-003: hot path LLM ゼロ (クライアント LLM 委譲)
+- ADR-011: Hook は inject-only (ADR-014 で部分撤回予定)
+- ADR-013: search_memory default filter + provenance + outdated (Proposed)
+- ADR-014: Three-layer 化 (capture / observation / memory) (Proposed)
 
 ## エージェント向けチェックリスト
 
