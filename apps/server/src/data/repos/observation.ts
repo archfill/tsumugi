@@ -1,4 +1,4 @@
-import { desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { observations } from "../schema.js";
 
@@ -64,6 +64,30 @@ export const observationRepo = {
       .where(eq(observations.session_id, sessionId))
       .orderBy(desc(observations.created_at))
       .limit(limit);
+  },
+  /**
+   * セッション ID から最新の non-null project_tag を解決する。
+   * search_memory のデフォルト挙動で session_id 指定時に project_tag を
+   * 自動補完するために使う (ADR-013 G)。
+   *
+   * 該当 observation が無いか、すべての observation で project_tag が
+   * null なら null を返す。
+   */
+  async getLatestProjectTagBySession(
+    sessionId: string,
+  ): Promise<string | null> {
+    const rows = await db
+      .select({ project_tag: observations.project_tag })
+      .from(observations)
+      .where(
+        and(
+          eq(observations.session_id, sessionId),
+          isNotNull(observations.project_tag),
+        ),
+      )
+      .orderBy(desc(observations.created_at))
+      .limit(1);
+    return rows[0]?.project_tag ?? null;
   },
   async updateFactsAndMetadata(
     id: string,

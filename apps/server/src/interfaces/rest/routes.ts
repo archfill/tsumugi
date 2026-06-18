@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { runDreaming } from "../../core/dreaming/runner.js";
 import { hybridSearch } from "../../core/search/hybrid.js";
+import { resolveSearchFilter } from "../../core/search/resolve-filter.js";
 import { decisionRepo } from "../../data/repos/decision.js";
 import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { linkRepo } from "../../data/repos/link.js";
@@ -92,20 +93,39 @@ restApp.get("/search", async (c) => {
     return c.json({ error: "query parameter 'q' is required" }, 400);
   }
   const limit = readLimit(c.req.query("limit"), 10, 50);
-  const projectTag = c.req.query("project_tag");
+  const projectTagRaw = c.req.query("project_tag");
   const type = c.req.query("type");
   const source = c.req.query("source");
   const sessionId = c.req.query("session_id");
-  const filter: Record<string, string> = {};
-  if (projectTag) filter["project_tag"] = projectTag;
-  if (type) filter["type"] = type;
-  if (source) filter["source"] = source;
-  if (sessionId) filter["session_id"] = sessionId;
+
+  // ADR-013 G: REST 側でも project_tag auto-fill opt-out を表現できるよう特別値
+  //   ?project_tag=__null__  → project_tag 自動補完のみ opt-out (他 filter は維持)
+  //   ?project_tag=foo       → 通常フィルタ
+  //   (省略)                  → 自動補完 (session_id があれば)
+  const projectTag =
+    projectTagRaw === "__null__" ? null : (projectTagRaw ?? undefined);
+
+  const filter: {
+    type?: string;
+    source?: string;
+    session_id?: string;
+    project_tag?: string | null;
+  } = {};
+  if (projectTag !== undefined) filter.project_tag = projectTag;
+  if (type) filter.type = type;
+  if (source) filter.source = source;
+  if (sessionId) filter.session_id = sessionId;
+
   try {
+    const resolvedFilter = await resolveSearchFilter(
+      Object.keys(filter).length > 0
+        ? (filter as Parameters<typeof resolveSearchFilter>[0])
+        : undefined,
+    );
     const hits = await hybridSearch({
       query,
       limit,
-      ...(Object.keys(filter).length > 0 ? { filter } : {}),
+      filter: resolvedFilter,
     });
     return c.json({ hits });
   } catch (e) {

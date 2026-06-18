@@ -1,6 +1,7 @@
 import { SearchInput } from "@tsumugi/shared";
 import type { SearchHit } from "@tsumugi/shared";
 import { hybridSearch } from "../../../core/search/hybrid.js";
+import { resolveSearchFilter } from "../../../core/search/resolve-filter.js";
 
 export const SEARCH_MEMORY_TOOL = {
   name: "search_memory",
@@ -45,8 +46,9 @@ export const SEARCH_MEMORY_TOOL = {
             description: "セッション ID フィルタ (observations のみ有効)",
           },
           project_tag: {
-            type: "string",
-            description: "プロジェクトタグフィルタ (observations のみ有効)",
+            type: ["string", "null"],
+            description:
+              "プロジェクトタグフィルタ (observations のみ有効)。string=その project に絞る。null=project_tag 自動補完のみ opt-out (他 filter は維持)。省略=session_id があれば自動補完 (ADR-013 G)。",
           },
         },
         additionalProperties: false,
@@ -65,6 +67,10 @@ export async function handleSearchMemory(
   rawInput: unknown,
 ): Promise<SearchMemoryResult> {
   const input = SearchInput.parse(rawInput);
-  const hits = await hybridSearch(input);
+  const resolvedFilter = await resolveSearchFilter(input.filter);
+  const hits = await hybridSearch({
+    ...input,
+    filter: resolvedFilter,
+  });
   return { hits };
 }
