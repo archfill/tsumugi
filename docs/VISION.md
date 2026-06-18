@@ -84,6 +84,24 @@ tsumugi は ADR の **代替ではなく補完**。
 tsumugi が成熟すれば ADR の「内向け部分」(個人記憶代わりに書かれていた ADR) は
 自然に縮退する可能性はある。ただし「他者と共有する判断」を ADR から外すことはない。
 
+### task / TODO は scope 外
+
+memory (後ろ向き、何が起きたか) と task (前向き、何をするか) は本質的に別概念で、
+tsumugi は memory に専念する。task 管理は別の場所で扱う:
+
+| 状況                                         | 扱う場所                                          |
+| -------------------------------------------- | ------------------------------------------------- |
+| 単純な TODO / 優先順位 / sprint 計画         | **リポジトリ内 markdown** (例: `docs/ROADMAP.md`) |
+| 状態遷移 (todo → doing → done)、複数 project | **yui の task system** (`yui_create_task` 等)     |
+| 公開 / 契約的なタスク (OSS contributor 含む) | **GitHub Issues / Projects**                      |
+
+tsumugi は **task そのものは持たない**が、「task #X を完了した」「task #Y で詰まった」
+等は memory として残せる (= **task の event を記憶する** が **task の状態は持たない**)。
+
+これは memory tool と task tool を混ぜると impedance が出るため (immutable vs mutable、
+後ろ向き vs 前向き、recall vs 状態遷移)。人間も memory (頭 / 日記) と task (TODO list /
+kanban) を別に持つ習慣と一致。
+
 ## 競合との立ち位置
 
 差別化は **「multi-agent host (Claude Code + Codex) × 個人 user × journal 路線」**
