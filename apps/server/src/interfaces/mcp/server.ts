@@ -19,6 +19,10 @@ import {
   GET_DREAMING_STATUS_TOOL,
   handleGetDreamingStatus,
 } from "./tools/get-dreaming-status.js";
+import {
+  MARK_MEMORY_OUTDATED_TOOL,
+  handleMarkMemoryOutdated,
+} from "./tools/mark-memory-outdated.js";
 
 export function createMcpServer(): Server {
   const server = new Server(
@@ -30,6 +34,7 @@ export function createMcpServer(): Server {
     tools: [
       SAVE_OBSERVATION_TOOL,
       SEARCH_MEMORY_TOOL,
+      MARK_MEMORY_OUTDATED_TOOL,
       TRIGGER_DREAMING_TOOL,
       GET_DREAMING_STATUS_TOOL,
     ],
@@ -43,6 +48,8 @@ export function createMcpServer(): Server {
       result = await handleSaveObservation(args);
     } else if (name === "search_memory") {
       result = await handleSearchMemory(args);
+    } else if (name === "mark_memory_outdated") {
+      result = await handleMarkMemoryOutdated(args);
     } else if (name === "trigger_dreaming") {
       result = await handleTriggerDreaming(args);
     } else if (name === "get_dreaming_status") {

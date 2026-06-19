@@ -60,3 +60,9 @@ export const SearchHit = z.object({
     .default([]),
 });
 export type SearchHit = z.infer<typeof SearchHit>;
+
+export const MarkMemoryOutdatedInput = z.object({
+  memory_id: z.string().min(1),
+  reason: z.string().min(10),
+});
+export type MarkMemoryOutdatedInput = z.infer<typeof MarkMemoryOutdatedInput>;

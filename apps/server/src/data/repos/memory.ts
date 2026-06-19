@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { memories } from "../schema.js";
 
@@ -56,6 +56,7 @@ export const memoryRepo = {
       .where(
         and(
           isNull(memories.archived_at),
+          isNull(memories.outdated_at),
           isNull(memories.llm_quarantined_at),
           // cooldown: 連続失敗 N 回未満 OR 最終失敗時刻が cooldown 以前
           or(
@@ -81,6 +82,43 @@ export const memoryRepo = {
       .update(memories)
       .set({ archived_at: sql`now()` })
       .where(eq(memories.id, id));
+  },
+  async markOutdated(id: string, reason: string): Promise<void> {
+    await db
+      .update(memories)
+      .set({
+        outdated_at: sql`now()`,
+        outdated_reason: reason,
+      })
+      .where(eq(memories.id, id));
+  },
+  async listOutdated(limit = 100): Promise<MemoryRow[]> {
+    return await db
+      .select()
+      .from(memories)
+      .where(and(isNull(memories.archived_at), isNotNull(memories.outdated_at)))
+      .orderBy(desc(memories.outdated_at))
+      .limit(limit);
+  },
+  async archiveOutdated(limit = 100): Promise<number> {
+    const rows = await db
+      .update(memories)
+      .set({ archived_at: sql`now()` })
+      .where(
+        and(
+          isNull(memories.archived_at),
+          isNotNull(memories.outdated_at),
+          sql`${memories.id} IN (
+            SELECT id FROM ${memories}
+            WHERE archived_at IS NULL
+              AND outdated_at IS NOT NULL
+            ORDER BY outdated_at DESC
+            LIMIT ${limit}
+          )`,
+        ),
+      )
+      .returning({ id: memories.id });
+    return rows.length;
   },
   /**
    * LLM 処理失敗を記録。累積閾値を超えたら quarantine。

@@ -193,8 +193,10 @@ agent が古くなった memory に気付いた時、現状は **何もできな
 実装:
 
 - `memories.outdated_at` + `memories.outdated_reason` カラム追加 (migration)
-- 既存の `time-update` / `decision-contradiction` dreaming job が outdated を
-  trigger として archive を判断 (即 archive ではなく、dreaming で他要素と整合確認)
+- `mark_memory_outdated` は即 archive せず、active memory に outdated marker だけを付ける
+- `time-update` dreaming maintenance pass が outdated marker を archive に反映する
+- `decision-contradiction` 連動は decision entity 側の supersede 処理と重なるため、
+  Phase 3 では追加しない
 
 agent 視点: 古い情報を見つけたら呼ぶ。**強制 archive ではなく** 「LLM に
 要検討フラグを立てる」軽量操作。

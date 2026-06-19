@@ -73,6 +73,9 @@ export const memories = pgTable("memories", {
     .defaultNow(),
   /** NULL = active; non-NULL = archived (soft delete / forget) */
   archived_at: timestamp("archived_at", { withTimezone: true }),
+  /** NULL = current; non-NULL = agent marked as outdated for dreaming review. */
+  outdated_at: timestamp("outdated_at", { withTimezone: true }),
+  outdated_reason: text("outdated_reason"),
   /**
    * LLM failure tracking (Layer 2 resilience).
    * - llm_failure_count: 連続失敗回数。成功で 0 に reset。
