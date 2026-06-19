@@ -43,6 +43,13 @@
       "when": 1781500004000,
       "tag": "0005_dashing_retro_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781835018917,
+      "tag": "0006_giant_dexter_bennett",
+      "breakpoints": true
     }
   ]
 }

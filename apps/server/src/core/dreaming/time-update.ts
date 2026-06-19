@@ -24,6 +24,7 @@ export interface TimeUpdateResult {
   runId: string;
   scanned: number;
   updated: number;
+  archivedOutdated: number;
   errors: string[];
 }
 
@@ -208,6 +209,7 @@ export async function timeAwareMemoryUpdate(opts?: {
   const runId = newId("drun");
   const errors: string[] = [];
   let updated = 0;
+  let archivedOutdated = 0;
 
   // 1. Record run start.
   await dreamingRunRepo.insert({
@@ -220,7 +222,11 @@ export async function timeAwareMemoryUpdate(opts?: {
   await dreamingRunRepo.markRunning(runId);
 
   try {
-    // 2. Load LLM-eligible memories (skip quarantined / in cooldown).
+    // 2. Archive memories explicitly marked outdated by an agent. This keeps
+    // direct tool calls reversible until the next dreaming maintenance pass.
+    archivedOutdated = await memoryRepo.archiveOutdated(maxMemories);
+
+    // 3. Load LLM-eligible memories (skip archived / quarantined / cooldown).
     const memories = await memoryRepo.listLlmEligible(maxMemories);
     const scanned = memories.length;
 
@@ -243,16 +249,16 @@ export async function timeAwareMemoryUpdate(opts?: {
       if (!needsRewrite) continue;
 
       try {
-        // 3. Rewrite narrative via LLM.
+        // 4. Rewrite narrative via LLM.
         const { narrative: newNarrative } = await timeUpdateOnly({
           narrative: memory.narrative,
           createdAtIso: createdAt.toISOString(),
         });
 
-        // 4. Re-embed with updated narrative.
+        // 5. Re-embed with updated narrative.
         const embedding = Array.from(await embedder.embed(newNarrative));
 
-        // 5. Persist + reset LLM failure counter.
+        // 6. Persist + reset LLM failure counter.
         await memoryRepo.update(memory.id, {
           narrative: newNarrative,
           embedding,
@@ -281,10 +287,10 @@ export async function timeAwareMemoryUpdate(opts?: {
       }
     }
 
-    // 6. Mark run completed.
-    await dreamingRunRepo.markCompleted(runId, updated);
+    // 7. Mark run completed.
+    await dreamingRunRepo.markCompleted(runId, updated + archivedOutdated);
 
-    return { runId, scanned, updated, errors };
+    return { runId, scanned, updated, archivedOutdated, errors };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await dreamingRunRepo.markFailed(runId, msg);
