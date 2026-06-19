@@ -34,7 +34,7 @@ ROADMAP.md は「**何が決まっていて、次に何をすべきか**」を 1
 | 010 | Phase 4 yui migration                         | Accepted | ✅ 実装済み                                            |
 | 011 | Hook LLM placement (inject-only)              | Accepted | ✅ 実装済み (ADR-014 で部分撤回予定)                   |
 | 012 | Milestone-event save nudge                    | Proposed | ⏳ **未着手** (ADR-014 で必要性低下、補助手段に格下げ) |
-| 013 | Recall default filter + provenance + outdated | Proposed | 🚧 **Phase 1-3 実装済み、smoke/docs 残り**             |
+| 013 | Recall default filter + provenance + outdated | Proposed | 🚧 **Phase 1-4 実装済み、rubric/docs 残り**            |
 | 014 | Three-layer 化 (capture / obs / mem)          | Proposed | ⏳ **未着手**                                          |
 
 ## 直近の実装優先順位
