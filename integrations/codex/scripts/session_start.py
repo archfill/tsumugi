@@ -49,8 +49,17 @@ Use the past memory above to inform your work. Call `save_observation`
 | Session-end retrospective                  | reflection  | "Deleted 1,946 noise obs (32% pollution rate)"         |
 
 Skip short / vague / procedural notes. Keep content to 1-3 sentences.
-Put searchable keywords into `facts`. Set `source: "claude-code"` and
-include `project_tag` and `session_id` when relevant.
+Put searchable keywords into `facts`. Set `source: "codex"` and include
+`project_tag` and `session_id` when relevant.
+
+For recall, prefer `search_memory` before guessing. Use the default
+project-scoped search first; only pass `filter.project_tag: null` when you
+intentionally need cross-project or session-only recall. Inspect
+`provenance` on memory hits when source context matters.
+
+If a memory is clearly obsolete, call `mark_memory_outdated` with the memory
+id and a concrete reason. This marks it for the next dreaming maintenance
+pass; it does not immediately delete it.
 """
 
 COMPACT_NUDGE = """\
@@ -64,7 +73,7 @@ details may have been summarized away. Before continuing:
 2. Call `save_observation` for anything worth preserving before
    continuing further work
 3. If you need to look up something from before the compaction, call
-   `search_memory` rather than guessing
+   project-scoped `search_memory` rather than guessing
 
 tsumugi does **not** automatically capture compacted content on its own
 — this responsibility is intentionally delegated to you (the agent).
