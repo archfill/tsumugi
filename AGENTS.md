@@ -168,7 +168,7 @@ forgetting / transparency / continuity) を判断基準として参照する。
 - ADR-002: pg_bigm + pgvector hybrid 検索
 - ADR-003: hot path LLM ゼロ (クライアント LLM 委譲)
 - ADR-011: Hook は inject-only (ADR-014 で部分撤回予定)
-- ADR-013: search_memory default filter + provenance + outdated (Proposed)
+- ADR-013: search_memory default filter + provenance + outdated (Accepted)
 - ADR-014: Three-layer 化 (capture / observation / memory) (Proposed)
 
 ## エージェント向けチェックリスト
