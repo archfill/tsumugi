@@ -138,7 +138,7 @@ private network (VPN 内、LAN 内) で使う場合はそのままでも可。
 - Drizzle schema（Observation / Memory / Decision / Link）
 - pg_bigm + pgvector hybrid 検索（RRF fusion）
 - BGE-M3 embedding ラッパ（@xenova/transformers）
-- MCP tool: `save_observation` / `search_memory`
+- MCP tool: `save_observation` / `search_memory` / `mark_memory_outdated`
 - LLM は呼ばない、hot path のみ
 - Claude Code 1 つから動作確認
 

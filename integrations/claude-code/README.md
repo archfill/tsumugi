@@ -2,7 +2,7 @@
 
 Claude Code 用 tsumugi メモリ統合。**inject-only hook 3 本**で「過去 memory の再注入」と「save_observation のガイダンス」を agent に渡す。観測作成は **agent 自身が MCP tool で呼ぶ** (ADR-011)。
 
-Python script の実体は [`integrations/shared/scripts/`](../shared/scripts/) に置かれ、[Codex 版](../codex/README.md) と完全に共有している。
+Python script は [Codex 版](../codex/README.md) と同じ内容を持つ。
 
 ## なぜこの設計か
 
@@ -32,9 +32,18 @@ plugin に `.mcp.json` を同梱しているため、`/plugin install` 時に **
 agent はこれを通じて以下の MCP tool を呼べる:
 
 - `save_observation` — Layer 1 へ観測を保存 (rubric の呼出先)
-- `search_memory` — Layer 1 + Layer 2 を hybrid 検索
+- `search_memory` — Layer 1 + Layer 2 を hybrid 検索。デフォルトは project-scoped recall
+- `mark_memory_outdated` — 古くなった memory を次回 dreaming で archive 候補にする
 - `trigger_dreaming` — Layer 2 synthesize を手動起動
 - `get_dreaming_status` — dreaming 履歴の取得
+
+### Agent が使う時の基本
+
+- 過去文脈が必要なら、推測する前に `search_memory` を呼ぶ。
+- 通常は `filter.project_tag` を指定しない。サーバーが session / project から自動補完し、現在 project に閉じた recall になる。
+- 別 project も含めて探す必要がある時だけ `filter: { "project_tag": null }` を渡す。これは project auto-fill の opt-out であり、`type` / `source` / `session_id` など他 filter は維持される。
+- memory hit の `provenance` を見て、どの observation 由来かを確認してから判断する。
+- 明らかに古い memory を見つけたら `mark_memory_outdated` を呼ぶ。即削除ではなく、次回 dreaming maintenance で archive される。
 
 ## インストール
 

@@ -1,6 +1,6 @@
 # tsumugi memory — Codex plugin
 
-Codex 用 tsumugi メモリ統合。Claude Code 版と同じ inject-only 設計 (ADR-011) を Codex の hook イベントモデルに合わせて wiring したもの。Python script 本体は `integrations/shared/scripts/` を再利用するので、Claude Code 版とロジックは完全に一致する。
+Codex 用 tsumugi メモリ統合。Claude Code 版と同じ inject-only 設計 (ADR-011) を Codex の hook イベントモデルに合わせて wiring したもの。Python script は Codex / Claude Code で同じ内容を持つ。
 
 ## なぜこれが必要か
 
@@ -31,9 +31,18 @@ Codex は Claude Code と:
 agent は以下の MCP tool を呼べる:
 
 - `save_observation` — Layer 1 へ観測を保存
-- `search_memory` — Layer 1 + Layer 2 を hybrid 検索
+- `search_memory` — Layer 1 + Layer 2 を hybrid 検索。デフォルトは project-scoped recall
+- `mark_memory_outdated` — 古くなった memory を次回 dreaming で archive 候補にする
 - `trigger_dreaming` — Layer 2 synthesize を手動起動
 - `get_dreaming_status` — dreaming 履歴の取得
+
+### Agent が使う時の基本
+
+- 過去文脈が必要なら、推測する前に `search_memory` を呼ぶ。
+- 通常は `filter.project_tag` を指定しない。サーバーが session / project から自動補完し、現在 project に閉じた recall になる。
+- 別 project も含めて探す必要がある時だけ `filter: { "project_tag": null }` を渡す。これは project auto-fill の opt-out であり、`type` / `source` / `session_id` など他 filter は維持される。
+- memory hit の `provenance` を見て、どの observation 由来かを確認してから判断する。
+- 明らかに古い memory を見つけたら `mark_memory_outdated` を呼ぶ。即削除ではなく、次回 dreaming maintenance で archive される。
 
 ## インストール
 
@@ -112,4 +121,4 @@ trusted_hash = "sha256:..."
 
 - [ADR-011](../../docs/adr/0011-hook-llm-placement.md) — inject-only 3 hook 設計の根拠
 - [`integrations/claude-code/README.md`](../claude-code/README.md) — Claude Code 版 (同じロジック)
-- [`integrations/shared/scripts/`](../shared/scripts/) — 共有 Python script
+- [`scripts/`](./scripts/) — Codex hook script
