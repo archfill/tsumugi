@@ -1,5 +1,4 @@
 {
-  "description": "tsumugi memory integration hooks for Codex — inject-only, no observation creation.",
   "hooks": {
     "SessionStart": [
       {
