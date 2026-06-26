@@ -6,6 +6,7 @@ inject only — never creates observations from the prompt itself.
 Detection (regex, no LLM):
 - Resume: "continue from", "where (did) we leave off", "what were we", etc.
 - Error: Traceback / panic / fatal / multiple Error: lines
+- Japanese error phrasing: "エラー", "失敗", "例外", "落ちた", signature errors
 
 When detected, call search_memory with the prompt (or extracted error text)
 and inject the top hits as additionalContext.
@@ -61,11 +62,26 @@ ERROR_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+JA_ERROR_RE = re.compile(
+    r"("
+    r"エラー"
+    r"|例外"
+    r"|失敗"
+    r"|落ち(た|て|ます|る)"
+    r"|署名.{0,20}(不正|無効|invalid)"
+    r"|invalid signature"
+    r"|not signed"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def _detect_intent(prompt: str) -> str | None:
     """Return 'resume', 'error', or None."""
     if RESUME_RE.search(prompt):
         return "resume"
+    if JA_ERROR_RE.search(prompt):
+        return "error"
     if len(ERROR_RE.findall(prompt)) >= 1 and (
         "Traceback" in prompt
         or "panic:" in prompt
@@ -80,6 +96,14 @@ def _extract_error_text(prompt: str) -> str:
     """For error queries, prefer the actual error string over the full prompt."""
     for m in ERROR_RE.finditer(prompt):
         line = m.group(0).strip()
+        if line:
+            return line[:200]
+    for m in JA_ERROR_RE.finditer(prompt):
+        start = max(prompt.rfind("\n", 0, m.start()) + 1, 0)
+        end = prompt.find("\n", m.end())
+        if end == -1:
+            end = len(prompt)
+        line = prompt[start:end].strip()
         if line:
             return line[:200]
     return prompt[:200]
