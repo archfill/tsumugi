@@ -29,7 +29,7 @@ Options:
   -p, --platform <kind>     claude | codex | both
                             (default: prompted; both when --non-interactive)
   -y, --non-interactive     Skip prompts (requires --url)
-  -f, --force               Re-clone marketplace even if it already exists
+  -f, --force               Re-clone Claude Code marketplace even if it already exists
   -h, --help                Show help
 ```
 
@@ -45,14 +45,34 @@ npx @archfill/tsumugi-cli install -u https://tsumugi.example.com -y
 # Codex only
 npx @archfill/tsumugi-cli install --platform=codex -u https://tsumugi.example.com -y
 
-# Force re-clone
+# Force re-clone (Claude Code marketplace clone only)
 npx @archfill/tsumugi-cli install -f
+```
+
+### `update`
+
+Refreshes installed marketplace/plugin registrations.
+
+- Claude Code: pulls the local marketplace clone and refreshes `known_marketplaces.json` / `installed_plugins.json`.
+- Codex: ensures `archfill/tsumugi --ref main` is registered as a Git marketplace, runs `codex plugin marketplace upgrade archfill`, then refreshes `tsumugi@archfill`.
+
+```text
+Options:
+  -p, --platform <kind>     claude | codex | both
+                            (default: both)
+  -h, --help                Show help
+```
+
+Examples:
+
+```bash
+npx @archfill/tsumugi-cli update
+npx @archfill/tsumugi-cli update --platform=codex
 ```
 
 ### Planned
 
 - `doctor` — Diagnose the local setup (Claude Code / Codex version, plugin presence, MCP connectivity, credentials file, etc.)
-- `update` — Pull marketplace updates and refresh the installed plugin metadata
 - `uninstall` — Remove the plugin registration and optionally delete the cloned marketplace
 - `status` — Show the current installation state
 
@@ -64,22 +84,21 @@ npx @archfill/tsumugi-cli install -f
 | Claude Code | `~/.claude/plugins/known_marketplaces.json`         | Registers the `archfill` marketplace                    |
 | Claude Code | `~/.claude/plugins/installed_plugins.json`          | Registers the `tsumugi@archfill` plugin                 |
 | Claude Code | `~/.claude/settings.json` (`enabledPlugins`, `env`) | Enables the plugin and exports `TSUMUGI_API_URL`        |
-| Codex       | `~/.codex/plugins/marketplaces/archfill/`           | Cloned `archfill/tsumugi` repo                          |
-| Codex       | (via `codex plugin marketplace add`)                | Registers the marketplace with Codex CLI                |
+| Codex       | (via `codex plugin marketplace add archfill/tsumugi --ref main`) | Registers the Git marketplace with Codex CLI |
 | Codex       | (via `codex plugin add tsumugi@archfill`)           | Installs and enables the plugin (sets `enabled = true`) |
 | Codex       | `~/.codex/config.toml` (`[mcp_servers.tsumugi]`)    | Registers the tsumugi MCP server with the literal URL   |
 | Shared      | `~/.config/tsumugi/credentials.json`                | Stores the tsumugi server URL                           |
 
 All writes are atomic (temp file + rename) and merge with existing values rather than overwriting.
 
-For Codex, the CLI runs `codex plugin marketplace add <path>` and `codex plugin add tsumugi@archfill` in sequence. If the Codex CLI is not on `PATH`, the marketplace is still cloned, and the CLI prints the two commands you should run after installing Codex.
+For Codex, the CLI runs `codex plugin marketplace add archfill/tsumugi --ref main` and `codex plugin add tsumugi@archfill` in sequence. This registers a Git marketplace, so future updates can use `codex plugin marketplace upgrade archfill`. If the Codex CLI is not on `PATH`, the CLI prints the two commands you should run after installing Codex.
 
 ## Plugin contents
 
 The tsumugi plugin (both platforms) includes:
 
 - 3 inject-only hooks (SessionStart / UserPromptSubmit / PreToolUse(Read)) that surface past memory and guide save_observation calls
-- The tsumugi MCP server (`save_observation`, `search_memory`, `trigger_dreaming`, `get_dreaming_status`) via `.mcp.json`
+- The tsumugi MCP server (`save_observation`, `search_memory`, `mark_memory_outdated`, `trigger_dreaming`, `get_dreaming_status`) via `.mcp.json`
 
 See [ADR-011](../../docs/adr/0011-hook-llm-placement.md) for the design rationale.
 
@@ -97,12 +116,18 @@ If you prefer not to use this CLI, you can install the plugin manually.
 ### Codex
 
 ```bash
-git clone https://github.com/archfill/tsumugi ~/.codex/plugins/marketplaces/archfill
-codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill
+codex plugin marketplace add archfill/tsumugi --ref main
 codex plugin add tsumugi@archfill
 ```
 
 `codex plugin marketplace add` だけだと `[plugins."tsumugi@archfill"]` セクションに `enabled = true` が立たず hook が読み込まれない。`codex plugin add` まで実行して plugin を install する。
+
+Codex plugin 更新:
+
+```bash
+codex plugin marketplace upgrade archfill
+codex plugin add tsumugi@archfill
+```
 
 `[mcp_servers.tsumugi]` を `~/.codex/config.toml` に追記する場合 (CLI が自動でやる内容):
 

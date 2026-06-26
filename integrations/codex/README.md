@@ -82,21 +82,21 @@ trusted_hash = "sha256:..."
 
 ### 手動インストール (代替)
 
-1. このリポを Codex marketplace ディレクトリに clone
+1. Codex CLI で Git marketplace 登録 + plugin install
 
    ```bash
-   mkdir -p ~/.codex/plugins/marketplaces
-   git clone https://github.com/archfill/tsumugi ~/.codex/plugins/marketplaces/archfill
-   ```
-
-2. Codex CLI で marketplace 登録 + plugin install
-
-   ```bash
-   codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill
+   codex plugin marketplace add archfill/tsumugi --ref main
    codex plugin add tsumugi@archfill
    ```
 
    `codex plugin marketplace add` だけだと `[plugins."tsumugi@archfill"]` セクションに `enabled = true` が立たず hook が読み込まれない。`codex plugin add` まで実行して初めて plugin が有効化される。
+
+2. 更新
+
+   ```bash
+   codex plugin marketplace upgrade archfill
+   codex plugin add tsumugi@archfill
+   ```
 
 3. tsumugi MCP server を `~/.codex/config.toml` に追加 (任意・推奨)
 
