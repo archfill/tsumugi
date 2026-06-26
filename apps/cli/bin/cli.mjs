@@ -7,7 +7,7 @@
  * Subcommands:
  *   install  — Register marketplace + plugin, write credentials, enable hooks (default)
  *   doctor   — (planned) Diagnose the local setup
- *   update   — (planned) Pull marketplace updates
+ *   update   — Refresh marketplace/plugin registrations
  *   uninstall — (planned) Remove the plugin
  *
  * Usage:
@@ -28,8 +28,8 @@ const MARKETPLACE_NAME = "archfill";
 const PLUGIN_ID = "tsumugi";
 const PLUGIN_VERSION = "0.1.0";
 const REPO = "archfill/tsumugi";
+const REPO_REF = "main";
 const CLAUDE_PLUGIN_SOURCE_SUBDIR = "integrations/claude-code";
-const CODEX_PLUGIN_SOURCE_SUBDIR = "integrations/codex";
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -49,10 +49,6 @@ const claudePluginSourceDir = () =>
 
 const codexDir = () => env.CODEX_HOME || join(homedir(), ".codex");
 const codexConfigPath = () => join(codexDir(), "config.toml");
-const codexMarketplaceCloneDir = () =>
-  join(codexDir(), "plugins", "marketplaces", MARKETPLACE_NAME);
-const codexPluginSourceDir = () =>
-  join(codexMarketplaceCloneDir(), CODEX_PLUGIN_SOURCE_SUBDIR);
 
 const credentialsPath = () =>
   join(homedir(), ".config", "tsumugi", "credentials.json");
@@ -72,6 +68,7 @@ Usage:
 
 Commands:
   install     Register marketplace + plugin and write credentials
+  update      Refresh marketplace/plugin registrations
   help        Show help for a command
 
 Run 'tsumugi-cli <command> --help' for command-specific options.
@@ -89,13 +86,30 @@ Options:
   -p, --platform <kind>     Target platform: claude | codex | both
                             (default: prompted; both when --non-interactive)
   -y, --non-interactive     Skip prompts (requires --url; --platform optional)
-  -f, --force               Re-clone marketplace even if it already exists
+  -f, --force               Re-clone Claude Code marketplace even if it already exists
   -h, --help                Show this help
 
 Examples:
   npx @archfill/tsumugi-cli install
   npx @archfill/tsumugi-cli install --url https://tsumugi.example.com
   npx @archfill/tsumugi-cli install -u https://tsumugi.example.com -p both -y
+`);
+}
+
+function printUpdateHelp() {
+  console.log(`tsumugi-cli update — Refresh installed tsumugi marketplace/plugin
+
+Usage:
+  npx @archfill/tsumugi-cli update [options]
+
+Options:
+  -p, --platform <kind>     Target platform: claude | codex | both
+                            (default: both)
+  -h, --help                Show this help
+
+Examples:
+  npx @archfill/tsumugi-cli update
+  npx @archfill/tsumugi-cli update --platform=codex
 `);
 }
 
@@ -132,6 +146,30 @@ function parseInstallArgs(rest) {
     exit(1);
   }
   return { url, platform, nonInteractive, force };
+}
+
+function parsePlatformOnlyArgs(rest, commandHelp) {
+  let platform;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--platform" || a === "-p") {
+      platform = rest[++i];
+    } else if (a.startsWith("--platform=")) {
+      platform = a.slice("--platform=".length);
+    } else if (a === "--help" || a === "-h") {
+      commandHelp();
+      exit(0);
+    } else {
+      console.error(`Unknown argument: ${a}`);
+      commandHelp();
+      exit(1);
+    }
+  }
+  if (platform && !PLATFORM_VALUES.has(platform)) {
+    console.error(`Invalid --platform: ${platform} (expected: claude, codex, both)`);
+    exit(1);
+  }
+  return { platform: platform || "both" };
 }
 
 // ---------------------------------------------------------------------------
@@ -314,11 +352,11 @@ function runCodex(args, { allowedErrorPatterns = [] } = {}) {
   });
 }
 
-async function registerCodexMarketplace(marketplaceRoot) {
-  // `codex plugin marketplace add` registers the marketplace. Re-running on an
-  // already-registered marketplace from the same source is benign — surface
-  // that as success.
-  await runCodex(["plugin", "marketplace", "add", marketplaceRoot], {
+async function registerCodexMarketplace() {
+  // Register as a Git marketplace so `codex plugin marketplace upgrade archfill`
+  // can refresh the snapshot later. Re-running is benign; Codex also migrates
+  // an existing local-path marketplace entry for the same name to this source.
+  await runCodex(["plugin", "marketplace", "add", REPO, "--ref", REPO_REF], {
     allowedErrorPatterns: [/already added/i, /different source/i],
   });
 }
@@ -339,6 +377,10 @@ async function installCodexPlugin() {
       ],
     },
   );
+}
+
+async function upgradeCodexMarketplace() {
+  await runCodex(["plugin", "marketplace", "upgrade", MARKETPLACE_NAME]);
 }
 
 /**
@@ -533,23 +575,12 @@ async function runInstall(rest) {
   }
 
   if (installCodex) {
-    tasks.push({
-      title: "Cloning marketplace for Codex",
-      task: async (msg) => {
-        return await cloneRepo(codexMarketplaceCloneDir(), opts.force, msg);
-      },
-    });
     if (isCodexCliAvailable()) {
       tasks.push({
-        title: "Registering Codex marketplace",
+        title: "Registering Codex Git marketplace",
         task: async () => {
-          if (!existsSync(codexPluginSourceDir())) {
-            throw new Error(
-              `expected plugin source at ${codexPluginSourceDir()} but it does not exist`,
-            );
-          }
-          await registerCodexMarketplace(codexMarketplaceCloneDir());
-          return "Codex marketplace registered via `codex plugin marketplace add`";
+          await registerCodexMarketplace();
+          return `Codex marketplace registered via \`codex plugin marketplace add ${REPO} --ref ${REPO_REF}\``;
         },
       });
       tasks.push({
@@ -563,7 +594,7 @@ async function runInstall(rest) {
       tasks.push({
         title: "Skipping Codex CLI registration (codex not on PATH)",
         task: async () =>
-          `Codex marketplace cloned but not registered — run \`codex plugin marketplace add ~/.codex/plugins/marketplaces/archfill && codex plugin add ${PLUGIN_ID}@${MARKETPLACE_NAME}\` after installing Codex`,
+          `Codex marketplace not registered — run \`codex plugin marketplace add ${REPO} --ref ${REPO_REF} && codex plugin add ${PLUGIN_ID}@${MARKETPLACE_NAME}\` after installing Codex`,
       });
     }
     tasks.push({
@@ -619,7 +650,7 @@ async function runInstall(rest) {
     );
   }
   if (installCodex) {
-    lines.push(`  codex source:  ${codexMarketplaceCloneDir()}`);
+    lines.push(`  codex source:  ${REPO} @ ${REPO_REF}`);
     lines.push(
       `  codex config:  ${codexConfigPath()} (mcp_servers.${PLUGIN_ID})`,
     );
@@ -630,6 +661,86 @@ async function runInstall(rest) {
     pc.dim("Docs: https://github.com/archfill/tsumugi/tree/main/integrations"),
   );
   stdout.write(lines.join("\n") + "\n");
+}
+
+async function runUpdate(rest) {
+  const opts = parsePlatformOnlyArgs(rest, printUpdateHelp);
+  const platform = opts.platform;
+  const updateClaude = platform === "claude" || platform === "both";
+  const updateCodex = platform === "codex" || platform === "both";
+
+  p.intro(pc.bgCyan(pc.black(" tsumugi-cli update ")));
+  p.log.info(`Updating for: ${pc.cyan(platformLabel(platform))}`);
+
+  const tasks = [];
+
+  if (updateClaude) {
+    tasks.push({
+      title: "Updating Claude Code marketplace clone",
+      task: async (msg) => {
+        if (!existsSync(claudeMarketplaceCloneDir())) {
+          throw new Error(
+            `Claude Code marketplace clone not found at ${claudeMarketplaceCloneDir()}; run install first`,
+          );
+        }
+        return await cloneRepo(claudeMarketplaceCloneDir(), false, msg);
+      },
+    });
+    tasks.push({
+      title: "Refreshing Claude Code marketplace + plugin metadata",
+      task: async () => {
+        if (!existsSync(claudePluginSourceDir())) {
+          throw new Error(
+            `expected plugin source at ${claudePluginSourceDir()} but it does not exist`,
+          );
+        }
+        registerClaudeMarketplace();
+        registerClaudePlugin();
+        return "Claude Code marketplace/plugin metadata refreshed";
+      },
+    });
+  }
+
+  if (updateCodex) {
+    if (!isCodexCliAvailable()) {
+      tasks.push({
+        title: "Skipping Codex update (codex not on PATH)",
+        task: async () =>
+          `Run \`codex plugin marketplace add ${REPO} --ref ${REPO_REF} && codex plugin marketplace upgrade ${MARKETPLACE_NAME} && codex plugin add ${PLUGIN_ID}@${MARKETPLACE_NAME}\` after installing Codex`,
+      });
+    } else {
+      tasks.push({
+        title: "Ensuring Codex Git marketplace registration",
+        task: async () => {
+          await registerCodexMarketplace();
+          return `Codex marketplace registered as ${REPO} @ ${REPO_REF}`;
+        },
+      });
+      tasks.push({
+        title: "Upgrading Codex marketplace snapshot",
+        task: async () => {
+          await upgradeCodexMarketplace();
+          return `Codex marketplace ${MARKETPLACE_NAME} upgraded`;
+        },
+      });
+      tasks.push({
+        title: "Refreshing Codex plugin install",
+        task: async () => {
+          await installCodexPlugin();
+          return `Codex plugin ${PLUGIN_ID}@${MARKETPLACE_NAME} installed/enabled`;
+        },
+      });
+    }
+  }
+
+  try {
+    await p.tasks(tasks);
+  } catch (e) {
+    p.cancel(pc.red(`Update failed: ${e.message}`));
+    exit(1);
+  }
+
+  p.outro(pc.green("✓ tsumugi-cli update complete"));
 }
 
 // ---------------------------------------------------------------------------
@@ -656,8 +767,12 @@ async function main() {
     case "install":
       await runInstall(rest);
       break;
+    case "update":
+      await runUpdate(rest);
+      break;
     case "help":
       if (rest[0] === "install") printInstallHelp();
+      else if (rest[0] === "update") printUpdateHelp();
       else printRootHelp();
       break;
     default:
