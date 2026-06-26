@@ -16,6 +16,16 @@ export interface SearchProvenanceRow extends Record<string, unknown> {
   created_at: Date;
 }
 
+function textArray(values: string[]) {
+  if (values.length === 0) {
+    return sql`ARRAY[]::text[]`;
+  }
+  return sql`ARRAY[${sql.join(
+    values.map((value) => sql`${value}`),
+    sql`, `,
+  )}]::text[]`;
+}
+
 export const linkRepo = {
   async insert(row: NewLinkRow): Promise<void> {
     await db.insert(links).values(row).onConflictDoNothing();
@@ -61,6 +71,8 @@ export const linkRepo = {
     const observationIds = params.observationIds;
     const memoryIds = params.memoryIds;
     if (observationIds.length === 0 && memoryIds.length === 0) return [];
+    const observationIdArray = textArray(observationIds);
+    const memoryIdArray = textArray(memoryIds);
 
     const result = await db.execute<SearchProvenanceRow>(sql`
       WITH hit_provenance AS (
@@ -74,8 +86,8 @@ export const linkRepo = {
         FROM links l
         JOIN observations o ON o.id = l.from_id
         WHERE
-          ${memoryIds}::text[] <> '{}'::text[]
-          AND l.to_id = ANY(${memoryIds}::text[])
+          ${memoryIdArray} <> '{}'::text[]
+          AND l.to_id = ANY(${memoryIdArray})
           AND l.to_layer = 'memory'
           AND l.from_layer = 'observation'
 
@@ -91,8 +103,8 @@ export const linkRepo = {
         FROM links l
         JOIN memories m ON m.id = l.to_id
         WHERE
-          ${observationIds}::text[] <> '{}'::text[]
-          AND l.from_id = ANY(${observationIds}::text[])
+          ${observationIdArray} <> '{}'::text[]
+          AND l.from_id = ANY(${observationIdArray})
           AND l.from_layer = 'observation'
           AND l.to_layer = 'memory'
       )
@@ -116,12 +128,13 @@ export const linkRepo = {
     projectTag: string,
   ): Promise<string[]> {
     if (memoryIds.length === 0) return [];
+    const memoryIdArray = textArray(memoryIds);
     const result = await db.execute<{ id: string }>(sql`
       SELECT DISTINCT l.to_id AS id
       FROM links l
       JOIN observations o ON o.id = l.from_id
       WHERE
-        l.to_id = ANY(${memoryIds}::text[])
+        l.to_id = ANY(${memoryIdArray})
         AND l.to_layer = 'memory'
         AND l.from_layer = 'observation'
         AND l.relation = 'derived_from'
