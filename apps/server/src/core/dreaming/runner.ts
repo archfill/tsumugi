@@ -11,6 +11,8 @@
  */
 
 import { observationRepo } from "../../data/repos/observation.js";
+import { captureRepo } from "../../data/repos/capture.js";
+import { promoteCaptures } from "../capture/promote.js";
 import { summarizeObservation } from "../observation/summarize.js";
 import { audnJudge } from "./audn.js";
 import { synthesizeMemories } from "./synthesize.js";
@@ -28,6 +30,8 @@ import {
 // ---------------------------------------------------------------------------
 
 export type DreamingJob =
+  | "promote-captures" // summarize Layer 1 captures into Layer 2 observations
+  | "sweep-captures"
   | "promote-observations" // summarize + AUDN judge for pending observations
   | "synthesize"
   | "time-update"
@@ -56,6 +60,8 @@ export interface DreamingRunOptions {
   sessionId?: string;
   /** Max observations to promote per run (default 50). */
   maxObservations?: number;
+  /** Max captures to promote per run (default 50). */
+  maxCaptures?: number;
   /** Max memories to load for synthesize / time-update (default 500). */
   maxMemories?: number;
   /** Max memories to actually rewrite in time-update (default 50). */
@@ -122,6 +128,47 @@ async function stepPromoteObservations(
     const msg = err instanceof Error ? err.message : String(err);
     return {
       name: "promote-observations",
+      ok: false,
+      error: msg,
+    };
+  }
+}
+
+async function stepPromoteCaptures(
+  maxCaptures: number,
+): Promise<DreamingStepResult> {
+  try {
+    const result = await promoteCaptures(maxCaptures);
+    return {
+      name: "promote-captures",
+      ok: true,
+      detail: result,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      name: "promote-captures",
+      ok: false,
+      error: msg,
+    };
+  }
+}
+
+async function stepSweepCaptures(): Promise<DreamingStepResult> {
+  try {
+    const [deletedPromoted, deletedExpired] = await Promise.all([
+      captureRepo.deletePromoted(),
+      captureRepo.sweepExpired(),
+    ]);
+    return {
+      name: "sweep-captures",
+      ok: true,
+      detail: { deletedPromoted, deletedExpired },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      name: "sweep-captures",
       ok: false,
       error: msg,
     };
@@ -224,6 +271,7 @@ export async function runDreaming(
     job,
     sessionId,
     maxObservations = 50,
+    maxCaptures = 50,
     maxMemories = 500,
     maxUpdates = 50,
   } = opts;
@@ -239,6 +287,14 @@ export async function runDreaming(
   const steps: DreamingStepResult[] = [];
 
   switch (job) {
+    case "promote-captures":
+      steps.push(await stepPromoteCaptures(maxCaptures));
+      break;
+
+    case "sweep-captures":
+      steps.push(await stepSweepCaptures());
+      break;
+
     case "promote-observations":
       steps.push(await stepPromoteObservations(maxObservations));
       break;
@@ -260,7 +316,8 @@ export async function runDreaming(
       break;
 
     case "full":
-      // Sequence: promote → synthesize → time-update → decision-contradiction
+      // Sequence: capture promotion → observation promotion → synthesize → time-update → decision-contradiction
+      steps.push(await stepPromoteCaptures(maxCaptures));
       steps.push(await stepPromoteObservations(maxObservations));
       steps.push(await stepSynthesize(maxMemories));
       steps.push(await stepTimeUpdate(maxMemories, maxUpdates));

@@ -1,8 +1,9 @@
 /**
  * Drizzle ORM schema definitions.
  *
- * Layer 1: observations — raw, immutable accumulation layer
- * Layer 2: memories    — synthesised, regenerable summaries
+ * Layer 1: captures     — deterministic raw hook capture, TTL-bound
+ * Layer 2: observations — curated accumulation layer
+ * Layer 3: memories     — synthesised, regenerable summaries
  * decisions            — explicit decisions with lifecycle tracking
  * links                — provenance edges between any layer entities
  */
@@ -16,11 +17,57 @@ import {
   timestamp,
   primaryKey,
   integer,
+  index,
 } from "drizzle-orm/pg-core";
 import { vector } from "drizzle-orm/pg-core";
 
 // ---------------------------------------------------------------------------
-// Layer 1: observations
+// Layer 1: captures
+// ---------------------------------------------------------------------------
+export const captures = pgTable(
+  "captures",
+  {
+    id: text("id").primaryKey(),
+    session_id: text("session_id").notNull(),
+    project_tag: text("project_tag"),
+    /** ClientSource: claude-code | codex | yui | other */
+    source: text("source").notNull(),
+    /** Hook event name: UserPromptSubmit | Stop | PostToolUse | ... */
+    hook_event: text("hook_event").notNull(),
+    /** Tool name for PostToolUse events. */
+    tool_name: text("tool_name"),
+    raw_content: text("raw_content").notNull(),
+    captured_at: timestamp("captured_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expires_at: timestamp("expires_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now() + interval '30 days'`),
+    promoted_to_obs_id: text("promoted_to_obs_id").references(
+      () => observations.id,
+    ),
+    promoted_at: timestamp("promoted_at", { withTimezone: true }),
+    skip_reason: text("skip_reason"),
+  },
+  (table) => [
+    index("idx_captures_session_captured").on(
+      table.session_id,
+      table.captured_at.desc(),
+    ),
+    index("idx_captures_expires").on(table.expires_at),
+    index("idx_captures_unpromoted")
+      .on(table.captured_at)
+      .where(
+        sql`${table.promoted_to_obs_id} IS NULL AND ${table.skip_reason} IS NULL`,
+      ),
+  ],
+);
+
+export type Capture = typeof captures.$inferSelect;
+export type NewCapture = typeof captures.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Layer 2: observations
 // ---------------------------------------------------------------------------
 export const observations = pgTable("observations", {
   id: text("id").primaryKey(),
@@ -29,6 +76,8 @@ export const observations = pgTable("observations", {
   type: text("type").notNull(),
   /** ClientSource: claude-code | codex | yui | other */
   source: text("source").notNull(),
+  /** agent = direct save_observation; capture = promoted from Layer 1 */
+  source_layer: text("source_layer").notNull().default("agent"),
   session_id: text("session_id"),
   project_tag: text("project_tag"),
   /** string[] */
@@ -55,7 +104,7 @@ export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;
 
 // ---------------------------------------------------------------------------
-// Layer 2: memories
+// Layer 3: memories
 // ---------------------------------------------------------------------------
 export const memories = pgTable("memories", {
   id: text("id").primaryKey(),

@@ -1,5 +1,5 @@
 {
-  "description": "tsumugi memory integration hooks for Claude Code — inject-only, no observation creation.",
+  "description": "tsumugi memory integration hooks for Claude Code — inject plus Layer 1 capture.",
   "hooks": {
     "SessionStart": [
       {
@@ -32,6 +32,29 @@
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pre_tool_use_read.py",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/post_tool_use.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/stop.py",
+            "timeout": 8
           }
         ]
       }

@@ -50,6 +50,13 @@
       "when": 1781835018917,
       "tag": "0006_giant_dexter_bennett",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782577501862,
+      "tag": "0007_amazing_captain_america",
+      "breakpoints": true
     }
   ]
 }

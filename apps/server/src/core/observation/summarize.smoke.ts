@@ -25,6 +25,7 @@ function fakeObs(overrides: Partial<ObservationRow>): ObservationRow {
     content: "",
     type: "other",
     source: "claude-code",
+    source_layer: "agent",
     session_id: null,
     project_tag: null,
     facts: null,

@@ -27,6 +27,7 @@ from _lib import (
     read_hook_input,
     resolve_project_tag,
     sanitize_secrets,
+    save_capture,
     search_memory,
     truncate,
 )
@@ -135,6 +136,7 @@ def main() -> None:
         fail_open_exit()
 
     payload = read_hook_input()
+    save_capture(payload, "UserPromptSubmit")
     prompt = first_text(payload, "prompt", "userPrompt", "message")
     if not prompt or len(prompt) < MIN_PROMPT_LEN:
         fail_open_exit()

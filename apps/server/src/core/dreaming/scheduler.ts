@@ -8,6 +8,7 @@
  *   - 実行履歴は既存の dreamingRunRepo / runner に乗る
  *
  * Default schedule:
+ *   - promote-captures           : every 30 min   (*\/30 * * * *)
  *   - promote-observations       : every 30 min   (*\/30 * * * *)
  *   - synthesize                 : every 6 hours  (0 *\/6 * * *)
  *   - time-update                : daily 03:00    (0 3 * * *)
@@ -101,6 +102,7 @@ export function startScheduler(
 
   const tasks: ScheduledTask[] = [];
   scheduleOne("promote-observations", config.promote, tasks);
+  scheduleOne("promote-captures", config.promote, tasks);
   scheduleOne("synthesize", config.synthesize, tasks);
   scheduleOne("time-update", config.timeUpdate, tasks);
   scheduleOne("decision-contradiction", config.decisionContradiction, tasks);

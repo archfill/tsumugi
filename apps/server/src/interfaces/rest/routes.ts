@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { runDreaming } from "../../core/dreaming/runner.js";
+import { saveCapture } from "../../core/capture/save.js";
 import { hybridSearch } from "../../core/search/hybrid.js";
 import { resolveSearchFilter } from "../../core/search/resolve-filter.js";
 import { decisionRepo } from "../../data/repos/decision.js";
@@ -36,6 +37,17 @@ restApp.get("/observations", async (c) => {
 restApp.delete("/observations/:id", async (c) => {
   await observationRepo.deleteById(c.req.param("id"));
   return c.json({ ok: true });
+});
+
+restApp.post("/captures", async (c) => {
+  try {
+    const body = await c.req.json();
+    const result = await saveCapture(body);
+    return c.json({ ...result, layer: "capture" });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return c.json({ error: message }, 400);
+  }
 });
 
 restApp.get("/memories", async (c) => {

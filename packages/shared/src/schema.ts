@@ -24,6 +24,16 @@ export const ObservationInput = z.object({
 });
 export type ObservationInput = z.infer<typeof ObservationInput>;
 
+export const CaptureInput = z.object({
+  session_id: z.string().min(1),
+  project_tag: z.string().optional(),
+  source: ClientSource,
+  hook_event: z.string().min(1),
+  tool_name: z.string().optional(),
+  raw_content: z.string().min(1),
+});
+export type CaptureInput = z.infer<typeof CaptureInput>;
+
 export const SearchInput = z.object({
   query: z.string().min(1),
   limit: z.number().int().positive().max(50).default(10),

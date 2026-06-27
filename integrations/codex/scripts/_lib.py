@@ -1,10 +1,10 @@
 """Shared helpers for tsumugi Claude Code hooks.
 
-Design principles (ADR-011):
+Design principles (ADR-011 / ADR-014):
 - urllib only, no external deps
 - fail-open: never block Claude Code
-- inject-only: hooks read from tsumugi but never POST observations
-  (save_observation is called by the agent via MCP, not by hooks)
+- hooks never POST observations directly; deterministic hook capture writes
+  only to Layer 1 captures and later dreaming promotes selected entries
 
 Credentials precedence:
   1. TSUMUGI_API_URL / TSUMUGI_API_KEY env vars
@@ -25,7 +25,7 @@ from typing import Any
 
 DEFAULT_TIMEOUT = 2.0
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "tsumugi" / "credentials.json"
-DEFAULT_SOURCE = "claude-code"
+DEFAULT_SOURCE = "codex"
 
 _credentials_cache: dict[str, str] | None = None
 
@@ -247,6 +247,52 @@ def list_recent_observations(
         return []
     obs = data.get("observations")
     return obs if isinstance(obs, list) else []
+
+
+def resolve_session_id(payload: dict[str, Any]) -> str:
+    return (
+        first_text(
+            payload,
+            "session_id",
+            "sessionId",
+            "conversation_id",
+            "conversationId",
+            "transcript_path",
+            "transcriptPath",
+        )
+        or os.environ.get("TSUMUGI_SESSION_ID")
+        or "unknown"
+    )
+
+
+def _capture_raw_content(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return truncate(sanitize_secrets(raw), 20000)
+
+
+def save_capture(
+    payload: dict[str, Any],
+    hook_event: str,
+    tool_name: str | None = None,
+    source: str = DEFAULT_SOURCE,
+) -> None:
+    """POST a Layer 1 capture. Fail-open; ignores all errors."""
+    cwd = first_text(payload, "cwd", "workingDirectory", "workspace")
+    body = {
+        "session_id": resolve_session_id(payload),
+        "project_tag": resolve_project_tag(cwd),
+        "source": source,
+        "hook_event": hook_event,
+        "raw_content": _capture_raw_content(payload),
+    }
+    if tool_name:
+        body["tool_name"] = tool_name
+    _request("POST", "/api/captures", body)
+
+
+def trigger_promote_captures() -> None:
+    """Best-effort immediate promotion trigger for Stop hooks."""
+    _request("POST", "/api/dreaming/trigger", {"job": "promote-captures"})
 
 
 def emit_session_start_context(text: str) -> None:
