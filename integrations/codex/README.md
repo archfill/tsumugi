@@ -39,7 +39,9 @@ agent は以下の MCP tool を呼べる:
 ### Agent が使う時の基本
 
 - 過去文脈が必要なら、推測する前に `search_memory` を呼ぶ。
-- `save_observation` は repo / session の内容を tsumugi server に永続化する外部送信。Codex の automatic approval review では、明示承認なしの repo 固有情報保存が拒否されることがある。
+- `save_observation` は repo / session の内容を tsumugi server に永続化する外部送信。repo 固有の設計判断、debugging finding、設定事実、workflow、完了作業、既知の罠は保存対象として扱う。
+- 保存時は止めるよりも、secret / credential / token / private key / 個人情報 / private endpoint / customer/user data / sensitive file content を除去・一般化し、短い要約として残す。生ログ、長いコード片、prompt 全文、command output 全文、private value の正確な値は保存しない。
+- sensitive な正確値がないと意味が保てない場合は、保存せずにユーザーへ確認する。
 - `save_observation` が approval review で拒否された場合、同じ保存を再試行したり別経路で迂回したりしない。保存したい内容を説明し、ユーザーの明示承認を得てから改めて呼ぶ。
 - 通常は `filter.project_tag` を指定しない。サーバーが session / project から自動補完し、現在 project に閉じた recall になる。
 - 別 project も含めて探す必要がある時だけ `filter: { "project_tag": null }` を渡す。これは project auto-fill の opt-out であり、`type` / `source` / `session_id` など他 filter は維持される。

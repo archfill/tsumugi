@@ -52,12 +52,21 @@ Skip short / vague / procedural notes. Keep content to 1-3 sentences.
 Put searchable keywords into `facts`. Set `source: "codex"` and include
 `project_tag` and `session_id` when relevant.
 
-Codex may treat `save_observation` as external persistence of workspace
-details. Before saving repository-specific, private, or sensitive details,
-make sure the user has explicitly authorized that persistence. If Codex
-approval review denies a `save_observation` call, do not retry the same save
-or route it through another tool; continue without saving, or ask the user for
-explicit approval after explaining what would be stored.
+Repository-specific engineering context is allowed and expected: decisions,
+debugging findings, configuration facts, workflows, completed work, and known
+pitfalls may be saved. Prefer sanitized, summarized memory over skipping useful
+context.
+
+Before saving, remove or generalize secrets, credentials, tokens, private keys,
+personal data, private endpoints, customer/user data, and verbatim sensitive
+file contents. Do not store raw logs, long code snippets, full prompts, full
+command outputs, or exact private values. Store the durable lesson, cause,
+decision, workaround, or result. If the value depends on sensitive exact
+details, ask the user instead of saving.
+
+If Codex approval review denies a `save_observation` call, do not retry the
+same save or route it through another tool; continue without saving, or ask the
+user for explicit approval after explaining what would be stored.
 
 For recall, prefer `search_memory` before guessing. Use the default
 project-scoped search first; only pass `filter.project_tag: null` when you
