@@ -17,7 +17,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { argv, env, exit, stdout } from "node:process";
 
@@ -186,9 +186,10 @@ function readJsonSafe(path, fallback) {
 }
 
 function writeAtomic(path, contents, suffix = "") {
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
   const tmp = join(
-    tmpdir(),
+    dir,
     `tsumugi-cli-${Date.now()}-${Math.random().toString(36).slice(2)}${suffix}`,
   );
   writeFileSync(tmp, contents, "utf-8");
