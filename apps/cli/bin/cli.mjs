@@ -394,17 +394,23 @@ function renderCodexTsumugiSection(url) {
     `url = "${url}/mcp"`,
     `startup_timeout_sec = 20`,
     `tool_timeout_sec = 60`,
+    ``,
+    `[mcp_servers.${PLUGIN_ID}.tools.save_observation]`,
+    `approval_mode = "approve"`,
+    ``,
+    `[mcp_servers.${PLUGIN_ID}.tools.search_memory]`,
+    `approval_mode = "approve"`,
   ].join("\n");
 }
 
 /**
- * Idempotently write `[mcp_servers.tsumugi]` to ~/.codex/config.toml.
+ * Idempotently write the Codex tsumugi MCP sections to ~/.codex/config.toml.
  *
  * Codex's config is TOML, not JSON. To avoid a TOML parser dependency while
  * still being safe, we do line-based section editing:
  *
- *   - If `[mcp_servers.tsumugi]` already exists, replace the contiguous block
- *     of `key = value` lines that follow it until the next `[section]` or EOF.
+ *   - If the managed `[mcp_servers.tsumugi]` sections already exist, replace
+ *     them in place.
  *   - Otherwise append a fresh section at the end of the file.
  *
  * Comments and unrelated sections are preserved.
@@ -412,7 +418,11 @@ function renderCodexTsumugiSection(url) {
 function configureCodexMcp(url) {
   const path = codexConfigPath();
   const section = renderCodexTsumugiSection(url);
-  const sectionHeader = `[mcp_servers.${PLUGIN_ID}]`;
+  const managedHeaders = new Set([
+    `[mcp_servers.${PLUGIN_ID}]`,
+    `[mcp_servers.${PLUGIN_ID}.tools.save_observation]`,
+    `[mcp_servers.${PLUGIN_ID}.tools.search_memory]`,
+  ]);
 
   if (!existsSync(path)) {
     ensureDir(dirname(path));
@@ -422,34 +432,51 @@ function configureCodexMcp(url) {
 
   const text = readFileSync(path, "utf-8");
   const lines = text.split("\n");
+  const nextLines = [];
+  let firstManagedIdx = -1;
+  let removedAny = false;
 
-  // Find the existing [mcp_servers.tsumugi] line.
-  const headerIdx = lines.findIndex((l) => l.trim() === sectionHeader);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*\[/.test(line) && managedHeaders.has(line.trim())) {
+      removedAny = true;
+      if (firstManagedIdx === -1) {
+        firstManagedIdx = nextLines.length;
+      }
+      while (i + 1 < lines.length && !/^\s*\[/.test(lines[i + 1])) {
+        i++;
+      }
+      continue;
+    }
+    nextLines.push(line);
+  }
 
-  if (headerIdx === -1) {
-    // No existing section — append.
+  if (!removedAny) {
     const sep = text.endsWith("\n") || text.length === 0 ? "" : "\n";
     writeAtomic(path, text + sep + "\n" + section + "\n");
     return "appended";
   }
 
-  // Replace the contiguous block (header + body) until the next [section] or EOF.
-  let endIdx = lines.length;
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    if (/^\s*\[/.test(lines[i])) {
-      endIdx = i;
-      break;
-    }
+  while (firstManagedIdx > 0 && nextLines[firstManagedIdx - 1].trim() === "") {
+    nextLines.splice(firstManagedIdx - 1, 1);
+    firstManagedIdx--;
   }
-  // Drop a trailing blank line right before the next section so we don't grow
-  // double blanks on every reinstall.
-  while (endIdx > headerIdx + 1 && lines[endIdx - 1].trim() === "") {
-    endIdx--;
+  while (
+    firstManagedIdx < nextLines.length &&
+    nextLines[firstManagedIdx].trim() === ""
+  ) {
+    nextLines.splice(firstManagedIdx, 1);
   }
 
-  const before = lines.slice(0, headerIdx);
-  const after = lines.slice(endIdx);
-  const merged = [...before, ...section.split("\n"), ...after].join("\n");
+  const replacement = section.split("\n");
+  if (firstManagedIdx > 0) {
+    replacement.unshift("");
+  }
+  if (firstManagedIdx < nextLines.length) {
+    replacement.push("");
+  }
+  nextLines.splice(firstManagedIdx, 0, ...replacement);
+  const merged = nextLines.join("\n");
   writeAtomic(path, merged.endsWith("\n") ? merged : merged + "\n");
   return "updated";
 }
@@ -602,7 +629,7 @@ async function runInstall(rest) {
       title: "Configuring Codex MCP server entry",
       task: async () => {
         const verb = configureCodexMcp(url);
-        return `Codex config.toml ${verb} (mcp_servers.${PLUGIN_ID} → ${url}/mcp)`;
+        return `Codex config.toml ${verb} (mcp_servers.${PLUGIN_ID} → ${url}/mcp, save_observation/search_memory approved)`;
       },
     });
   }

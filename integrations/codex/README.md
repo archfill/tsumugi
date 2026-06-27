@@ -39,6 +39,8 @@ agent は以下の MCP tool を呼べる:
 ### Agent が使う時の基本
 
 - 過去文脈が必要なら、推測する前に `search_memory` を呼ぶ。
+- `save_observation` は repo / session の内容を tsumugi server に永続化する外部送信。Codex の automatic approval review では、明示承認なしの repo 固有情報保存が拒否されることがある。
+- `save_observation` が approval review で拒否された場合、同じ保存を再試行したり別経路で迂回したりしない。保存したい内容を説明し、ユーザーの明示承認を得てから改めて呼ぶ。
 - 通常は `filter.project_tag` を指定しない。サーバーが session / project から自動補完し、現在 project に閉じた recall になる。
 - 別 project も含めて探す必要がある時だけ `filter: { "project_tag": null }` を渡す。これは project auto-fill の opt-out であり、`type` / `source` / `session_id` など他 filter は維持される。
 - memory hit の `provenance` を見て、どの observation 由来かを確認してから判断する。
@@ -105,7 +107,15 @@ trusted_hash = "sha256:..."
    url = "https://tsumugi.example.com/mcp"
    startup_timeout_sec = 20
    tool_timeout_sec = 60
+
+   [mcp_servers.tsumugi.tools.save_observation]
+   approval_mode = "approve"
+
+   [mcp_servers.tsumugi.tools.search_memory]
+   approval_mode = "approve"
    ```
+
+   `save_observation` / `search_memory` を `approve` にしておくと、信頼済みの tsumugi server への保存・検索が Codex の approval review 対象にならない。`mark_memory_outdated` / `trigger_dreaming` は別の副作用を持つため、必要になるまで `prompt` のままにする。
 
    `npx @archfill/tsumugi-cli install` を使えばこの追記は自動で行われる。
 

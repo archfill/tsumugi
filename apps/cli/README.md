@@ -86,7 +86,7 @@ npx @archfill/tsumugi-cli update --platform=codex
 | Claude Code | `~/.claude/settings.json` (`enabledPlugins`, `env`) | Enables the plugin and exports `TSUMUGI_API_URL`        |
 | Codex       | (via `codex plugin marketplace add archfill/tsumugi --ref main`) | Registers the Git marketplace with Codex CLI |
 | Codex       | (via `codex plugin add tsumugi@archfill`)           | Installs and enables the plugin (sets `enabled = true`) |
-| Codex       | `~/.codex/config.toml` (`[mcp_servers.tsumugi]`)    | Registers the tsumugi MCP server with the literal URL   |
+| Codex       | `~/.codex/config.toml` (`[mcp_servers.tsumugi]`)    | Registers the tsumugi MCP server with the literal URL and approves `save_observation` / `search_memory` |
 | Shared      | `~/.config/tsumugi/credentials.json`                | Stores the tsumugi server URL                           |
 
 All writes are atomic (temp file + rename) and merge with existing values rather than overwriting.
@@ -136,7 +136,15 @@ codex plugin add tsumugi@archfill
 url = "https://tsumugi.example.com/mcp"
 startup_timeout_sec = 20
 tool_timeout_sec = 60
+
+[mcp_servers.tsumugi.tools.save_observation]
+approval_mode = "approve"
+
+[mcp_servers.tsumugi.tools.search_memory]
+approval_mode = "approve"
 ```
+
+`save_observation` は memory 保存の中核なので、信頼済みの tsumugi server に対しては Codex の approval review 対象にしない設定にしている。`mark_memory_outdated` / `trigger_dreaming` は別の副作用を持つため、CLI は自動承認しない。
 
 ### Set the tsumugi server URL (both)
 

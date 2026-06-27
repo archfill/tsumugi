@@ -52,6 +52,13 @@ Skip short / vague / procedural notes. Keep content to 1-3 sentences.
 Put searchable keywords into `facts`. Set `source: "codex"` and include
 `project_tag` and `session_id` when relevant.
 
+Codex may treat `save_observation` as external persistence of workspace
+details. Before saving repository-specific, private, or sensitive details,
+make sure the user has explicitly authorized that persistence. If Codex
+approval review denies a `save_observation` call, do not retry the same save
+or route it through another tool; continue without saving, or ask the user for
+explicit approval after explaining what would be stored.
+
 For recall, prefer `search_memory` before guessing. Use the default
 project-scoped search first; only pass `filter.project_tag: null` when you
 intentionally need cross-project or session-only recall. Inspect
