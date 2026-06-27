@@ -46,7 +46,8 @@ tsumugi/
 ├── apps/ui/Dockerfile    # front image (nginx 配信 + /api・/mcp を server に proxy)
 ├── package.json          # pnpm workspace root
 ├── pnpm-workspace.yaml
-└── mise.toml             # node + pnpm 宣言
+├── mise.toml             # 任意: tool version / task alias
+└── flake.nix             # 任意: NixOS devShell
 ```
 
 ## 技術スタック
@@ -61,24 +62,54 @@ tsumugi/
 | Resilience      | 3 層 retry + per-item failure tracking + provider fallback           |
 | Frontend        | React 19 / Vite 8 / TailwindCSS 4 / shadcn / TanStack Router & Query |
 | Package manager | pnpm（workspace）                                                    |
-| Task runner     | mise                                                                 |
+| Task runner     | pnpm scripts（mise は任意）                                          |
+| Dev shell       | 任意: Nix flakes（主に NixOS 向け）                                  |
 | 配布            | Docker compose                                                       |
 
 ## 開発コマンド
 
+要件:
+
+- Node.js 22 以上
+- pnpm 11 以上
+
+Node.js / pnpm の導入方法は任意。nvm / fnm / mise / Volta / Nix など、各自の環境に合わせる。
+
 ```bash
 # 初回セットアップ
-mise install                  # node 22 + pnpm 11
 pnpm install                  # workspace 全体
 
 # 起動
-mise run dev-server           # MCP server (port 8000)
-mise run dev-ui               # admin UI (port 5174)
+pnpm dev:server               # MCP server (port 8000)
+pnpm dev:ui                   # admin UI (port 5174)
 
 # 品質チェック
-mise run check                # lint + typecheck + test 全体
-mise run typecheck            # 型チェックのみ
+pnpm check                    # lint + typecheck + test 全体
+pnpm typecheck                # 型チェックのみ
 ```
+
+### 任意: mise
+
+mise を使う場合は、同じ操作を task として実行できる。
+
+```bash
+mise install                  # node 22 + pnpm 11
+mise run install
+mise run dev-server
+mise run dev-ui
+mise run check
+```
+
+### 任意: NixOS devShell
+
+NixOS では mise が Node を source build する設定になりやすいため、必要に応じて devShell を使える。
+
+```bash
+nix develop                   # Nixpkgs の node 22 + pnpm + mise
+pnpm install
+```
+
+devShell 内では `MISE_DISABLE_TOOLS=node,pnpm` を設定し、mise は task runner としてだけ使える。
 
 ## LLM 用途と tier
 
