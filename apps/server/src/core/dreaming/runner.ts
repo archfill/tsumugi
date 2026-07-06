@@ -66,6 +66,14 @@ export interface DreamingRunOptions {
   maxMemories?: number;
   /** Max memories to actually rewrite in time-update (default 50). */
   maxUpdates?: number;
+  /** Max wall-clock time for time-update before graceful stop. */
+  timeUpdateMaxRunMs?: number;
+  /** Max per-memory LLM failures before time-update stops early. */
+  timeUpdateMaxFailures?: number;
+  /** Max consecutive per-memory LLM failures before time-update stops early. */
+  timeUpdateMaxConsecutiveFailures?: number;
+  /** Age after which a previous running time-update is marked stale. */
+  timeUpdateStaleRunMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,9 +206,22 @@ async function stepSynthesize(
 async function stepTimeUpdate(
   maxMemories: number,
   maxUpdates: number,
+  opts?: {
+    maxRunMs?: number;
+    maxFailures?: number;
+    maxConsecutiveFailures?: number;
+    staleRunMs?: number;
+  },
 ): Promise<DreamingStepResult> {
   try {
-    const result = await timeAwareMemoryUpdate({ maxMemories, maxUpdates });
+    const result = await timeAwareMemoryUpdate({
+      maxMemories,
+      maxUpdates,
+      maxRunMs: opts?.maxRunMs,
+      maxFailures: opts?.maxFailures,
+      maxConsecutiveFailures: opts?.maxConsecutiveFailures,
+      staleRunMs: opts?.staleRunMs,
+    });
     return {
       name: "time-update",
       ok: true,
@@ -274,6 +295,10 @@ export async function runDreaming(
     maxCaptures = 50,
     maxMemories = 500,
     maxUpdates = 50,
+    timeUpdateMaxRunMs,
+    timeUpdateMaxFailures,
+    timeUpdateMaxConsecutiveFailures,
+    timeUpdateStaleRunMs,
   } = opts;
 
   if (job === "reflection" && !sessionId) {
@@ -304,7 +329,14 @@ export async function runDreaming(
       break;
 
     case "time-update":
-      steps.push(await stepTimeUpdate(maxMemories, maxUpdates));
+      steps.push(
+        await stepTimeUpdate(maxMemories, maxUpdates, {
+          maxRunMs: timeUpdateMaxRunMs,
+          maxFailures: timeUpdateMaxFailures,
+          maxConsecutiveFailures: timeUpdateMaxConsecutiveFailures,
+          staleRunMs: timeUpdateStaleRunMs,
+        }),
+      );
       break;
 
     case "decision-contradiction":
@@ -320,7 +352,14 @@ export async function runDreaming(
       steps.push(await stepPromoteCaptures(maxCaptures));
       steps.push(await stepPromoteObservations(maxObservations));
       steps.push(await stepSynthesize(maxMemories));
-      steps.push(await stepTimeUpdate(maxMemories, maxUpdates));
+      steps.push(
+        await stepTimeUpdate(maxMemories, maxUpdates, {
+          maxRunMs: timeUpdateMaxRunMs,
+          maxFailures: timeUpdateMaxFailures,
+          maxConsecutiveFailures: timeUpdateMaxConsecutiveFailures,
+          staleRunMs: timeUpdateStaleRunMs,
+        }),
+      );
       steps.push(await stepDecisionContradiction());
       break;
 

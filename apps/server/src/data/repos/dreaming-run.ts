@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { dreamingRuns } from "../schema.js";
 
@@ -18,25 +18,72 @@ export const dreamingRunRepo = {
       .set({ status: "running", started_at: sql`now()` })
       .where(eq(dreamingRuns.id, id));
   },
-  async markCompleted(id: string, outputCount: number): Promise<void> {
+  async markCompleted(
+    id: string,
+    outputCount: number,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     await db
       .update(dreamingRuns)
       .set({
         status: "completed",
         finished_at: sql`now()`,
         output_count: outputCount,
+        ...(metadata !== undefined ? { metadata } : {}),
       })
       .where(eq(dreamingRuns.id, id));
   },
-  async markFailed(id: string, error: string): Promise<void> {
+  async markFailed(
+    id: string,
+    error: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     await db
       .update(dreamingRuns)
       .set({
         status: "failed",
         finished_at: sql`now()`,
         error_message: error.slice(0, 1000),
+        ...(metadata !== undefined ? { metadata } : {}),
       })
       .where(eq(dreamingRuns.id, id));
+  },
+  async findRunningByKind(jobKind: string): Promise<DreamingRunRow | null> {
+    const rows = await db
+      .select()
+      .from(dreamingRuns)
+      .where(
+        and(eq(dreamingRuns.job_kind, jobKind), eq(dreamingRuns.status, "running")),
+      )
+      .orderBy(desc(dreamingRuns.started_at))
+      .limit(1);
+    return rows[0] ?? null;
+  },
+  async markStaleRunning(
+    jobKind: string,
+    staleBefore: Date,
+    reason: string,
+  ): Promise<number> {
+    const rows = await db
+      .update(dreamingRuns)
+      .set({
+        status: "failed",
+        finished_at: sql`now()`,
+        error_message: reason.slice(0, 1000),
+        metadata: {
+          stoppedReason: "stale_running",
+          staleBefore: staleBefore.toISOString(),
+        },
+      })
+      .where(
+        and(
+          eq(dreamingRuns.job_kind, jobKind),
+          eq(dreamingRuns.status, "running"),
+          lt(dreamingRuns.started_at, staleBefore),
+        ),
+      )
+      .returning({ id: dreamingRuns.id });
+    return rows.length;
   },
   async listRecent(limit = 20, offset = 0): Promise<DreamingRunRow[]> {
     return await db

@@ -25,6 +25,9 @@ export interface TimeUpdateResult {
   scanned: number;
   updated: number;
   archivedOutdated: number;
+  failed: number;
+  skipped: boolean;
+  stoppedReason: TimeUpdateStoppedReason;
   errors: string[];
 }
 
@@ -38,6 +41,13 @@ export interface TimeUpdateOnlyResult {
   narrative: string;
   reasoning: string;
 }
+
+export type TimeUpdateStoppedReason =
+  | "completed"
+  | "active_run_in_progress"
+  | "time_budget_exceeded"
+  | "failure_budget_exceeded"
+  | "consecutive_failure_budget_exceeded";
 
 // ---------------------------------------------------------------------------
 // Internal LLM response shape
@@ -156,6 +166,45 @@ function applyAging(
   };
 }
 
+const DEFAULT_MAX_RUN_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_FAILURES = 10;
+const DEFAULT_MAX_CONSECUTIVE_FAILURES = 5;
+const DEFAULT_STALE_RUN_MS = 2 * 60 * 60 * 1000;
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function buildRunMetadata(input: {
+  scanned: number;
+  updated: number;
+  archivedOutdated: number;
+  failed: number;
+  stoppedReason: TimeUpdateStoppedReason;
+  durationMs: number;
+  maxRunMs: number;
+  maxUpdates: number;
+  maxFailures: number;
+  maxConsecutiveFailures: number;
+  staleRunsMarked: number;
+  errors: string[];
+}): Record<string, unknown> {
+  return {
+    scanned: input.scanned,
+    updated: input.updated,
+    archivedOutdated: input.archivedOutdated,
+    failed: input.failed,
+    stoppedReason: input.stoppedReason,
+    durationMs: input.durationMs,
+    maxRunMs: input.maxRunMs,
+    maxUpdates: input.maxUpdates,
+    maxFailures: input.maxFailures,
+    maxConsecutiveFailures: input.maxConsecutiveFailures,
+    staleRunsMarked: input.staleRunsMarked,
+    errorsSample: input.errors.slice(0, 10),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
@@ -202,14 +251,49 @@ export async function timeUpdateOnly(
 export async function timeAwareMemoryUpdate(opts?: {
   maxMemories?: number;
   maxUpdates?: number;
+  maxRunMs?: number;
+  maxFailures?: number;
+  maxConsecutiveFailures?: number;
+  staleRunMs?: number;
 }): Promise<TimeUpdateResult> {
   const maxMemories = opts?.maxMemories ?? 500;
   const maxUpdates = opts?.maxUpdates ?? 50;
+  const maxRunMs = opts?.maxRunMs ?? DEFAULT_MAX_RUN_MS;
+  const maxFailures = opts?.maxFailures ?? DEFAULT_MAX_FAILURES;
+  const maxConsecutiveFailures =
+    opts?.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES;
+  const staleRunMs = opts?.staleRunMs ?? DEFAULT_STALE_RUN_MS;
 
   const runId = newId("drun");
   const errors: string[] = [];
+  const startedMs = Date.now();
   let updated = 0;
+  let failed = 0;
+  let consecutiveFailures = 0;
   let archivedOutdated = 0;
+  let scanned = 0;
+  let stoppedReason: TimeUpdateStoppedReason = "completed";
+  let staleRunsMarked = 0;
+
+  staleRunsMarked = await dreamingRunRepo.markStaleRunning(
+    "time-update",
+    new Date(Date.now() - staleRunMs),
+    `time-update run exceeded stale threshold (${staleRunMs}ms)`,
+  );
+
+  const activeRun = await dreamingRunRepo.findRunningByKind("time-update");
+  if (activeRun) {
+    return {
+      runId: activeRun.id,
+      scanned: 0,
+      updated: 0,
+      archivedOutdated: 0,
+      failed: 0,
+      skipped: true,
+      stoppedReason: "active_run_in_progress",
+      errors: [],
+    };
+  }
 
   // 1. Record run start.
   await dreamingRunRepo.insert({
@@ -218,6 +302,14 @@ export async function timeAwareMemoryUpdate(opts?: {
     status: "pending",
     input_count: 0,
     output_count: 0,
+    metadata: {
+      maxRunMs,
+      maxUpdates,
+      maxFailures,
+      maxConsecutiveFailures,
+      staleRunMs,
+      staleRunsMarked,
+    },
   });
   await dreamingRunRepo.markRunning(runId);
 
@@ -228,7 +320,7 @@ export async function timeAwareMemoryUpdate(opts?: {
 
     // 3. Load LLM-eligible memories (skip archived / quarantined / cooldown).
     const memories = await memoryRepo.listLlmEligible(maxMemories);
-    const scanned = memories.length;
+    scanned = memories.length;
 
     // Update input_count now that we know it.
     await dreamingRunRepo.update(runId, { input_count: scanned });
@@ -237,6 +329,18 @@ export async function timeAwareMemoryUpdate(opts?: {
 
     for (const memory of memories) {
       if (updated >= maxUpdates) break;
+      if (Date.now() - startedMs >= maxRunMs) {
+        stoppedReason = "time_budget_exceeded";
+        break;
+      }
+      if (failed >= maxFailures) {
+        stoppedReason = "failure_budget_exceeded";
+        break;
+      }
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        stoppedReason = "consecutive_failure_budget_exceeded";
+        break;
+      }
 
       const createdAt = memory.created_at;
       const elapsed = elapsedDays(createdAt);
@@ -268,13 +372,13 @@ export async function timeAwareMemoryUpdate(opts?: {
         await memoryRepo.resetLlmFailures(memory.id);
 
         updated++;
+        consecutiveFailures = 0;
       } catch (err) {
         // Layer 2 failure tracking: record per-memory failure + maybe quarantine.
         const { quarantined } = await memoryRepo.recordLlmFailure(memory.id);
-        const msg =
-          err instanceof Error
-            ? `memory ${memory.id}: ${err.message}`
-            : `memory ${memory.id}: unknown error`;
+        failed++;
+        consecutiveFailures++;
+        const msg = `memory ${memory.id}: ${errorMessage(err)}`;
         errors.push(msg);
         logger.warn(
           {
@@ -288,12 +392,51 @@ export async function timeAwareMemoryUpdate(opts?: {
     }
 
     // 7. Mark run completed.
-    await dreamingRunRepo.markCompleted(runId, updated + archivedOutdated);
+    await dreamingRunRepo.markCompleted(runId, updated + archivedOutdated, {
+      ...buildRunMetadata({
+        scanned,
+        updated,
+        archivedOutdated,
+        failed,
+        stoppedReason,
+        durationMs: Date.now() - startedMs,
+        maxRunMs,
+        maxUpdates,
+        maxFailures,
+        maxConsecutiveFailures,
+        staleRunsMarked,
+        errors,
+      }),
+    });
 
-    return { runId, scanned, updated, archivedOutdated, errors };
+    return {
+      runId,
+      scanned,
+      updated,
+      archivedOutdated,
+      failed,
+      skipped: false,
+      stoppedReason,
+      errors,
+    };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await dreamingRunRepo.markFailed(runId, msg);
+    const msg = errorMessage(err);
+    await dreamingRunRepo.markFailed(runId, msg, {
+      ...buildRunMetadata({
+        scanned,
+        updated,
+        archivedOutdated,
+        failed,
+        stoppedReason,
+        durationMs: Date.now() - startedMs,
+        maxRunMs,
+        maxUpdates,
+        maxFailures,
+        maxConsecutiveFailures,
+        staleRunsMarked,
+        errors,
+      }),
+    });
     throw err;
   }
 }

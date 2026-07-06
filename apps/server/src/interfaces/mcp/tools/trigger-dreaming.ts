@@ -13,6 +13,8 @@ export const TRIGGER_DREAMING_TOOL = {
       job: {
         type: "string",
         enum: [
+          "promote-captures",
+          "sweep-captures",
           "promote-observations",
           "synthesize",
           "time-update",
@@ -39,6 +41,22 @@ export const TRIGGER_DREAMING_TOOL = {
         type: "number",
         description: "time-update の更新数上限 (default 50)",
       },
+      timeUpdateMaxRunMs: {
+        type: "number",
+        description: "time-update の実行時間上限 ms (default 30分)",
+      },
+      timeUpdateMaxFailures: {
+        type: "number",
+        description: "time-update の失敗数上限 (default 10)",
+      },
+      timeUpdateMaxConsecutiveFailures: {
+        type: "number",
+        description: "time-update の連続失敗数上限 (default 5)",
+      },
+      timeUpdateStaleRunMs: {
+        type: "number",
+        description: "running run を stale とみなす経過時間 ms (default 2時間)",
+      },
     },
     required: ["job"],
     additionalProperties: false,
@@ -52,6 +70,10 @@ export async function handleTriggerDreaming(rawInput: unknown) {
     maxObservations?: number;
     maxMemories?: number;
     maxUpdates?: number;
+    timeUpdateMaxRunMs?: number;
+    timeUpdateMaxFailures?: number;
+    timeUpdateMaxConsecutiveFailures?: number;
+    timeUpdateStaleRunMs?: number;
   };
   if (!input?.job) {
     throw new Error("job is required");
