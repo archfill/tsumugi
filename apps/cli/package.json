@@ -1,6 +1,6 @@
 {
   "name": "@archfill/tsumugi-cli",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "CLI for the tsumugi memory plugin (Claude Code & Codex) — install / manage / diagnose your tsumugi setup in one command.",
   "type": "module",
   "license": "Apache-2.0",

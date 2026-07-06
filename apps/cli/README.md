@@ -97,10 +97,11 @@ For Codex, the CLI runs `codex plugin marketplace add archfill/tsumugi --ref mai
 
 The tsumugi plugin (both platforms) includes:
 
-- 3 inject-only hooks (SessionStart / UserPromptSubmit / PreToolUse(Read)) that surface past memory and guide save_observation calls
+- Inject hooks (SessionStart / UserPromptSubmit / PreToolUse(Read)) that surface past memory and guide save_observation calls
+- Layer 1 capture hooks for durable safety-net capture; Codex also captures PreCompact / PostCompact boundaries
 - The tsumugi MCP server (`save_observation`, `search_memory`, `mark_memory_outdated`, `trigger_dreaming`, `get_dreaming_status`) via `.mcp.json`
 
-See [ADR-011](../../docs/adr/0011-hook-llm-placement.md) for the design rationale.
+See [ADR-011](../../docs/adr/0011-hook-llm-placement.md) and [ADR-014](../../docs/adr/0014-three-layer-capture-promotion.md) for the design rationale.
 
 ## Manual install (alternative)
 

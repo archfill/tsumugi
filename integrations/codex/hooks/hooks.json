@@ -47,6 +47,30 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${PLUGIN_ROOT}/scripts/pre_compact.py",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${PLUGIN_ROOT}/scripts/post_compact.py",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

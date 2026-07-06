@@ -20,12 +20,16 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT = 2.0
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "tsumugi" / "credentials.json"
 DEFAULT_SOURCE = "codex"
+MAX_COMPACT_TRANSCRIPT_RECORDS = 24
+MAX_COMPACT_STRING_LEN = 2000
+MAX_COMPACT_LIST_ITEMS = 24
 
 _credentials_cache: dict[str, str] | None = None
 
@@ -288,6 +292,94 @@ def save_capture(
     if tool_name:
         body["tool_name"] = tool_name
     _request("POST", "/api/captures", body)
+
+
+def _read_jsonl_tail(path: Path, max_records: int) -> list[dict[str, Any]]:
+    records: deque[dict[str, Any]] = deque(maxlen=max_records)
+    try:
+        with path.open(encoding="utf-8") as fp:
+            for line in fp:
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    records.append(obj)
+    except OSError:
+        return []
+    return list(records)
+
+
+def _read_last_compacted_record(path: Path) -> dict[str, Any] | None:
+    last: dict[str, Any] | None = None
+    try:
+        with path.open(encoding="utf-8") as fp:
+            for line in fp:
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict) and obj.get("type") == "compacted":
+                    last = obj
+    except OSError:
+        return None
+    return last
+
+
+def _scrub_compact_value(value: Any, depth: int = 0) -> Any:
+    if depth > 8:
+        return "[TRUNCATED_DEPTH]"
+    if isinstance(value, str):
+        return truncate(sanitize_secrets(value), MAX_COMPACT_STRING_LEN)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [
+            _scrub_compact_value(item, depth + 1)
+            for item in value[:MAX_COMPACT_LIST_ITEMS]
+        ]
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, child in value.items():
+            key_str = str(key)
+            if key_str in {"encrypted_content", "base64", "image", "screenshot"}:
+                out[key_str] = "[REDACTED_NON_TEXT_CONTENT]"
+                continue
+            out[key_str] = _scrub_compact_value(child, depth + 1)
+        return out
+    return truncate(sanitize_secrets(str(value)), MAX_COMPACT_STRING_LEN)
+
+
+def _compact_payload_for_capture(payload: dict[str, Any], hook_event: str) -> dict[str, Any]:
+    transcript = first_text(payload, "transcript_path", "transcriptPath")
+    transcript_path = Path(transcript).expanduser() if transcript else None
+    compact_payload: dict[str, Any] = {
+        "cwd": first_text(payload, "cwd", "workingDirectory", "workspace"),
+        "session_id": first_text(payload, "session_id", "sessionId"),
+        "transcript_path": transcript,
+        "hook_payload": _scrub_compact_value(payload),
+        "capture_kind": "codex_compaction",
+    }
+    if not transcript_path or not transcript_path.is_file():
+        compact_payload["transcript_available"] = False
+        return compact_payload
+
+    compact_payload["transcript_available"] = True
+    compact_payload["transcript_path"] = str(transcript_path)
+    if hook_event == "PostCompact":
+        compact_payload["compacted_record"] = _scrub_compact_value(
+            _read_last_compacted_record(transcript_path)
+        )
+    else:
+        compact_payload["transcript_tail"] = _scrub_compact_value(
+            _read_jsonl_tail(transcript_path, MAX_COMPACT_TRANSCRIPT_RECORDS)
+        )
+    return compact_payload
+
+
+def save_compact_capture(payload: dict[str, Any], hook_event: str) -> None:
+    """Capture compact boundary context without writing Layer 2 observations."""
+    save_capture(_compact_payload_for_capture(payload, hook_event), hook_event)
 
 
 def trigger_promote_captures() -> None:

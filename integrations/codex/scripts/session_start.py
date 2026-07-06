@@ -91,8 +91,9 @@ details may have been summarized away. Before continuing:
 3. If you need to look up something from before the compaction, call
    project-scoped `search_memory` rather than guessing
 
-tsumugi does **not** automatically capture compacted content on its own
-— this responsibility is intentionally delegated to you (the agent).
+tsumugi also attempts deterministic compact-boundary capture in Layer 1,
+but agent-curated `save_observation` remains the higher-precision path for
+durable discoveries, decisions, progress, and blockers.
 """
 
 

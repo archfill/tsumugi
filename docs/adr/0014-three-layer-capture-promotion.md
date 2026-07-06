@@ -111,6 +111,7 @@ Layer 1 capture のために以下を追加:
 | `UserPromptSubmit`            | **新規 (capture 役割)**: user prompt 全文を `captures` に insert (LLM 呼出無し) + 既存の search inject (両立) |
 | `Stop`                        | **新規**: session 終了マーカー + agent final response を `captures` に保存 + 昇格 trigger                     |
 | `PostToolUse(milestone のみ)` | **新規**: milestone command (gh pr merge / git commit / git push / gh release create) のみ捕捉                |
+| `PreCompact` / `PostCompact`  | **新規**: compact 境界の transcript tail / compacted record を `captures` に保存 (Codex で実測後に追加)       |
 | `SessionStart`                | (既存維持) memory + rubric inject                                                                             |
 | `PreToolUse(Read)`            | (既存維持) file 関連 memory inject                                                                            |
 
@@ -124,6 +125,7 @@ Layer 1 capture のために以下を追加:
 | UserPromptSubmit (user prompt 全文)                                                                        | ✅ 捕捉 | turn-level の起点、user の意図が出る                |
 | Stop (session 終了 + agent final response)                                                                 | ✅ 捕捉 | turn-level の終点、session 区切り                   |
 | PostToolUse: `gh pr merge` / `git commit` (amend 除く) / `git push` (force/tag 除く) / `gh release create` | ✅ 捕捉 | discrete milestone、意味ある区切り (ADR-012 同調)   |
+| PreCompact / PostCompact                                                                                   | ✅ 捕捉 | compact 後に追加発話が無い場合の取りこぼし防止       |
 | PostToolUse: 上記以外 (Bash / Read / Edit / Write 等)                                                      | ❌ skip | yui で実証された汚染パターン (2,637 件 noise / 32%) |
 
 理由:
@@ -131,6 +133,9 @@ Layer 1 capture のために以下を追加:
 - **yui の 32% 汚染**は tool 単位 全捕捉が主因だった (ADR-011 §1)
 - **Tencent Hy-Memory** も同じ結論で turn-level capture (`pipeline.everyNConversations`)
 - milestone PostToolUse は ADR-012 の trigger pattern と整合
+- PreCompact / PostCompact は `observations` に直書きしない。Codex 実測では hook payload
+  から `transcript_path` が取れるため、Layer 1 `captures` に compact 境界の raw context
+  だけを退避できる。これは ADR-011 で否定した「薄い observation 自動作成」とは別物。
 - 通常の tool 実行は **agent 主導 save (primary path) に任せる**
 
 ADR-011 で禁止された「**raw を observation (旧 Layer 1) に投げる**」は `observations`
@@ -230,8 +235,9 @@ scope に合致しないため scope 外。将来 capture / recall / continuity 
 - **自動 L1 抽出 trigger** (Tencent 風 `everyNConversations`): 本 ADR の dual-path
   entry (agent 主導 save primary + capture 昇格 secondary) が同等の役割を果たし、
   agent の judgment 余地を残す
-- **PreCompact hook** (mem0 風): ADR-011 で否定した hook 駆動 deterministic obs
-  作成と同型、本 ADR の capture 昇格で代替する
+- **PreCompact hook から observation 直作成** (mem0 風): ADR-011 で否定した hook 駆動
+  deterministic obs 作成と同型。本 ADR では observation 直作成ではなく Layer 1 capture
+  に限定する。
 
 ## 帰結
 
@@ -259,7 +265,9 @@ scope に合致しないため scope 外。将来 capture / recall / continuity 
 - **昇格パイプラインのコスト**: 全 PostToolUse を LLM で判定するため、summarize の
   LLM call が大幅増 (LOW tier だが requests/min は無視できない)
   - 緩和策: capture を batch にまとめて昇格 (e.g., session ごと + tool ごとに集約)
-- **PreCompact のような hook event は廃止のまま** (ADR-011 の判断を維持)
+- **Compact capture の重複リスク**: UserPromptSubmit / Stop capture と同じ発話を含み得る。
+  緩和策として transcript 全量ではなく compact 境界の tail / compacted record に限定し、
+  Layer 2 への昇格判断は dreaming 側に委ねる。
 - **Layer 1 検索が公式 API として存在しない** (将来 ADR-015 で検討)
 
 ### 中立

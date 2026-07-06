@@ -14,15 +14,22 @@ Codex は Claude Code と:
 
 ## 含まれるもの
 
-### Hook (3 本、全部 inject-only)
+### Hook
 
 | Hook               | matcher                    | 役割                                                                           |
 | ------------------ | -------------------------- | ------------------------------------------------------------------------------ |
 | `SessionStart`     | `startup\|resume\|compact` | 過去 memory + save rubric を inject。compact 時は recall-recovery nudge も追加 |
-| `UserPromptSubmit` | `*`                        | resume / error pattern を検出 → `search_memory` で関連 memory を inject        |
+| `UserPromptSubmit` | `*`                        | prompt を Layer 1 capture に保存。resume / error pattern では関連 memory も inject |
 | `PreToolUse`       | `Read`                     | 開いたファイル名で `search_memory` → 関連 memory を inject                     |
+| `PostToolUse`      | `Bash`                     | commit / push / merge / release の milestone command だけを Layer 1 capture に保存 |
+| `PreCompact`       | `manual\|auto`             | compact 直前の transcript tail を Layer 1 capture に保存                        |
+| `PostCompact`      | `manual\|auto`             | compact 後の transcript compacted record を Layer 1 capture に保存し、capture promotion を best-effort trigger |
+| `Stop`             | `*`                        | session 終端 payload を Layer 1 capture に保存し、capture promotion を best-effort trigger |
 
-いずれも観測 (observation) を**作成しない**。
+hook は観測 (observation) を**直接作成しない**。自動保存は Layer 1 `captures` に限定し、後段の dreaming が必要なものだけ Layer 2 observation へ昇格する。
+
+`SessionStart(compact)` は圧縮後に agent へ保存判断を促す inject、`PreCompact` / `PostCompact`
+は圧縮境界の raw context を Layer 1 に退避する capture で、責務が異なる。
 
 ### MCP server
 
@@ -73,7 +80,7 @@ npx @archfill/tsumugi-cli install --platform=both
 
 ### ⚠ Codex の hook trust 承認
 
-Codex は plugin-bundled hooks (bundled `hooks/hooks.json` の hook 群) を **手動 trust 承認後**にしか実行しません。install 直後の初回 session で SessionStart / UserPromptSubmit / PreToolUse(Read) の trust プロンプトが順次出るので、それぞれ approve してください。
+Codex は plugin-bundled hooks (bundled `hooks/hooks.json` の hook 群) を **手動 trust 承認後**にしか実行しません。install 直後の初回 session で SessionStart / UserPromptSubmit / PreToolUse(Read) / capture hooks の trust プロンプトが順次出るので、それぞれ approve してください。
 
 trust 承認後の状態は `~/.codex/config.toml` の以下のセクションで確認できます。
 
