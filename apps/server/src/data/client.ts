@@ -14,7 +14,7 @@ if (!url) {
   throw new Error("DATABASE_URL environment variable is required");
 }
 
-const pool = new Pool({ connectionString: url });
+export const pool = new Pool({ connectionString: url });
 
 export const db = drizzle(pool, { schema });
 export type DB = typeof db;

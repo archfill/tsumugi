@@ -1,15 +1,23 @@
 import { captureRepo } from "../../data/repos/capture.js";
 import type { CaptureRow } from "../../data/repos/capture.js";
+import { withPgAdvisoryLock } from "../../data/advisory-lock.js";
 import { observationRepo } from "../../data/repos/observation.js";
 import { getEmbedder } from "../../external/embedding/singleton.js";
 import { newId } from "../../lib/id.js";
 import { summarizeObservation } from "../observation/summarize.js";
 import { audnJudge } from "../dreaming/audn.js";
 
+export type PromoteCapturesStoppedReason =
+  | "completed"
+  | "active_run_in_progress";
+
 export interface PromoteCapturesResult {
   total: number;
   promoted: number;
   skipped: number;
+  deletedPromoted: number;
+  runSkipped: boolean;
+  stoppedReason: PromoteCapturesStoppedReason;
   errors: string[];
 }
 
@@ -39,9 +47,28 @@ function captureAsObservation(capture: CaptureRow) {
 export async function promoteCaptures(
   maxCaptures = 50,
 ): Promise<PromoteCapturesResult> {
+  return await withPgAdvisoryLock(
+    "tsumugi:promote-captures",
+    () => promoteCapturesLocked(maxCaptures),
+    async () => ({
+      total: 0,
+      promoted: 0,
+      skipped: 0,
+      deletedPromoted: 0,
+      runSkipped: true,
+      stoppedReason: "active_run_in_progress",
+      errors: [],
+    }),
+  );
+}
+
+async function promoteCapturesLocked(
+  maxCaptures: number,
+): Promise<PromoteCapturesResult> {
   const captures = await captureRepo.listUnpromoted(maxCaptures);
   let promoted = 0;
   let skipped = 0;
+  let deletedPromoted = 0;
   const errors: string[] = [];
 
   for (const capture of captures) {
@@ -74,7 +101,6 @@ export async function promoteCaptures(
         embedding: Array.from(embedding),
       });
       await captureRepo.markPromoted(capture.id, observationId);
-      await captureRepo.deletePromoted();
 
       let hasAudnError = false;
       for (const fact of summary.facts) {
@@ -101,10 +127,15 @@ export async function promoteCaptures(
     }
   }
 
+  deletedPromoted = await captureRepo.deletePromoted();
+
   return {
     total: captures.length,
     promoted,
     skipped,
+    deletedPromoted,
+    runSkipped: false,
+    stoppedReason: "completed",
     errors,
   };
 }
