@@ -33,6 +33,9 @@ transient/permanent 分類 + exponential backoff retry + per-attempt timeout を
 - backoff は 500ms → 1s → 2s → 4s (max 8s)、±30% jitter
 - per-attempt timeout は `AbortController` で実装 (default 30s)
 - 設定: `LLM_MAX_RETRIES` / `LLM_TIMEOUT_MS`
+- OpenAI 互換 provider は `LLM_LOW_TIMEOUT_MS` / `LLM_MID_TIMEOUT_MS` で
+  per-attempt timeout を tier 別に上書きできる。thinking を使う tier の長い応答を
+  軽量 tier と同じ timeout に押し込めない
 
 ### Layer 2: Failure tracking (DB レコード)
 

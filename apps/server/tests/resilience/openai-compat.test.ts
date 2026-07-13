@@ -30,6 +30,11 @@ async function flushRetryTimers<T>(promise: Promise<T>, ms = 2_000): Promise<T> 
   return result.value;
 }
 
+function requestBody(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>): Record<string, unknown> {
+  const init = fetchMock.mock.calls[0]?.[1];
+  return JSON.parse(String(init?.body)) as Record<string, unknown>;
+}
+
 describe("OpenAI-compatible LLM resilience", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -64,6 +69,78 @@ describe("OpenAI-compatible LLM resilience", () => {
 
     expect(result.text).toBe("ok");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends an enabled GLM reasoning profile when configured", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createOpenAiCompatClient({
+      apiKey: "test",
+      model: "glm-5.2",
+      baseUrl: "https://example.test/v1",
+      dialect: "zai",
+      thinking: "enabled",
+      reasoningEffort: "high",
+    });
+
+    await client.complete(baseRequest);
+
+    expect(requestBody(fetchMock)).toMatchObject({
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
+    });
+  });
+
+  it("disables thinking without sending reasoning_effort", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createOpenAiCompatClient({
+      apiKey: "test",
+      model: "glm-5.2",
+      baseUrl: "https://example.test/v1",
+      dialect: "zai",
+      thinking: "disabled",
+    });
+
+    await client.complete(baseRequest);
+
+    const body = requestBody(fetchMock);
+    expect(body).toMatchObject({ thinking: { type: "disabled" } });
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("omits Z.ai-specific fields for the generic dialect", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createOpenAiCompatClient({
+      apiKey: "test",
+      model: "test-model",
+      baseUrl: "https://example.test/v1",
+      dialect: "generic",
+      thinking: "enabled",
+      reasoningEffort: "high",
+    });
+
+    await client.complete(baseRequest);
+
+    const body = requestBody(fetchMock);
+    expect(body).not.toHaveProperty("thinking");
+    expect(body).not.toHaveProperty("reasoning_effort");
   });
 
   it("retries 429 responses", async () => {

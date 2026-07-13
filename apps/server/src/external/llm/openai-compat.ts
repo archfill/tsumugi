@@ -15,7 +15,15 @@
  */
 
 import process from "node:process";
-import type { LlmClient, LlmRequest, LlmResponse, LlmTier } from "./types.js";
+import type {
+  LlmClient,
+  LlmOpenAiDialect,
+  LlmReasoningEffort,
+  LlmRequest,
+  LlmResponse,
+  LlmThinkingMode,
+  LlmTier,
+} from "./types.js";
 import {
   ExternalError,
   ExternalResponseError,
@@ -40,7 +48,7 @@ interface ChatCompletionResponse {
 export interface OpenAiCompatOptions {
   /** Bearer token */
   apiKey: string;
-  /** model id (例: 'glm-4.5-air') */
+  /** model id (例: 'glm-5.2') */
   model: string;
   /** base URL (末尾 /v1 等まで含む) */
   baseUrl: string;
@@ -48,6 +56,12 @@ export interface OpenAiCompatOptions {
   maxAttempts?: number;
   /** per-attempt timeout ms (default 30000, env LLM_TIMEOUT_MS で上書き可) */
   timeoutMs?: number;
+  /** Request dialect. Defaults to generic OpenAI compatibility. */
+  dialect?: LlmOpenAiDialect;
+  /** Z.ai-specific thinking mode. Omitted for other dialects. */
+  thinking?: LlmThinkingMode;
+  /** Provider-specific reasoning budget. Requires thinking=enabled. */
+  reasoningEffort?: LlmReasoningEffort;
   /** Metrics label supplied by the tier singleton. */
   tier?: LlmTier;
 }
@@ -62,6 +76,9 @@ class PermanentLlmError extends ExternalError {}
 
 export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
   const baseUrl = opts.baseUrl.replace(/\/+$/, "");
+  const usesZaiDialect = opts.dialect === "zai";
+  const sendsReasoningEffort =
+    usesZaiDialect && opts.thinking === "enabled" && opts.reasoningEffort;
   const maxAttempts =
     opts.maxAttempts ?? Number(process.env["LLM_MAX_RETRIES"] ?? 3);
   const timeoutMs =
@@ -80,6 +97,12 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
       ],
       temperature: req.temperature ?? 0.0,
       max_tokens: req.maxTokens ?? 2048,
+      ...(usesZaiDialect && opts.thinking
+        ? { thinking: { type: opts.thinking } }
+        : {}),
+      ...(sendsReasoningEffort
+        ? { reasoning_effort: opts.reasoningEffort }
+        : {}),
       ...(req.jsonResponse
         ? { response_format: { type: "json_object" as const } }
         : {}),

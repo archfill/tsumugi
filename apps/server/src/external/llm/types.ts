@@ -7,6 +7,10 @@ export type LlmTier = "low" | "mid";
  */
 export type LlmProvider = "anthropic" | "openai-compat";
 
+export type LlmOpenAiDialect = "generic" | "zai";
+export type LlmThinkingMode = "enabled" | "disabled";
+export type LlmReasoningEffort = "high" | "max";
+
 export interface LlmRequest {
   system: string;
   user: string;

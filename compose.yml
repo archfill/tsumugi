@@ -56,12 +56,21 @@ services:
       # LLM provider 設定 (1Password tsumugi-dev env から流入)
       LLM_LOW_PROVIDER: ${LLM_LOW_PROVIDER:-openai-compat}
       LLM_LOW_API_KEY: ${LLM_LOW_API_KEY:-}
-      LLM_LOW_MODEL: ${LLM_LOW_MODEL:-glm-4.5-air}
-      LLM_LOW_BASE_URL: ${LLM_LOW_BASE_URL:-https://api.z.ai/api/paas/v4}
+      LLM_LOW_MODEL: ${LLM_LOW_MODEL:-glm-5.2}
+      LLM_LOW_BASE_URL: ${LLM_LOW_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+      LLM_LOW_OPENAI_DIALECT: ${LLM_LOW_OPENAI_DIALECT:-zai}
+      LLM_LOW_THINKING: ${LLM_LOW_THINKING:-disabled}
+      LLM_LOW_TIMEOUT_MS: ${LLM_LOW_TIMEOUT_MS:-30000}
       LLM_MID_PROVIDER: ${LLM_MID_PROVIDER:-openai-compat}
       LLM_MID_API_KEY: ${LLM_MID_API_KEY:-}
-      LLM_MID_MODEL: ${LLM_MID_MODEL:-glm-4.6}
-      LLM_MID_BASE_URL: ${LLM_MID_BASE_URL:-https://api.z.ai/api/paas/v4}
+      LLM_MID_MODEL: ${LLM_MID_MODEL:-glm-5.2}
+      LLM_MID_BASE_URL: ${LLM_MID_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+      LLM_MID_OPENAI_DIALECT: ${LLM_MID_OPENAI_DIALECT:-zai}
+      LLM_MID_THINKING: ${LLM_MID_THINKING:-enabled}
+      LLM_MID_REASONING_EFFORT: ${LLM_MID_REASONING_EFFORT:-high}
+      LLM_MID_TIMEOUT_MS: ${LLM_MID_TIMEOUT_MS:-90000}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-3}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-30000}
     volumes:
       - tsumugi-hf-cache:/app/.cache/huggingface
     expose:

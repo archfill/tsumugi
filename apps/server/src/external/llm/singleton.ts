@@ -164,6 +164,10 @@ function buildBasicClient(tier: LlmTier, cfg: LlmModelConfig): LlmClient {
         apiKey: cfg.apiKey,
         model: cfg.model,
         baseUrl: cfg.baseUrl,
+        timeoutMs: cfg.timeoutMs,
+        dialect: cfg.openAiDialect,
+        thinking: cfg.thinking,
+        reasoningEffort: cfg.reasoningEffort,
         tier,
       });
       break;
