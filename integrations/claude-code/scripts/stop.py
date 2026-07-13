@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stop hook: capture final session state and trigger capture promotion."""
+"""Stop hook: persist a turn checkpoint without invoking promotion."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _lib import fail_open_exit, is_configured, read_hook_input, save_capture, trigger_promote_captures
+from _lib import fail_open_exit, is_configured, read_hook_input, save_capture
 
 
 def main() -> None:
@@ -15,7 +15,6 @@ def main() -> None:
         fail_open_exit()
     payload = read_hook_input()
     save_capture(payload, "Stop")
-    trigger_promote_captures()
     fail_open_exit()
 
 

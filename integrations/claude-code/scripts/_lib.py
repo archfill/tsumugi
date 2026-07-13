@@ -249,6 +249,29 @@ def list_recent_observations(
     return obs if isinstance(obs, list) else []
 
 
+def get_capture_continuity(
+    project_tag: str,
+    exclude_session_id: str | None = None,
+    max_sessions: int = 3,
+    max_turns_per_session: int = 3,
+) -> list[dict[str, Any]]:
+    """Return bounded unpromoted checkpoints without exposing raw captures."""
+    from urllib.parse import urlencode
+
+    params = [
+        ("project_tag", project_tag),
+        ("max_sessions", str(max_sessions)),
+        ("max_turns_per_session", str(max_turns_per_session)),
+    ]
+    if exclude_session_id:
+        params.append(("exclude_session_id", exclude_session_id))
+    data = _request("GET", "/api/captures/continuity?" + urlencode(params))
+    if not isinstance(data, dict):
+        return []
+    sessions = data.get("sessions")
+    return sessions if isinstance(sessions, list) else []
+
+
 def resolve_session_id(payload: dict[str, Any]) -> str:
     return (
         first_text(
@@ -285,14 +308,23 @@ def save_capture(
         "hook_event": hook_event,
         "raw_content": _capture_raw_content(payload),
     }
+    turn_id = first_text(payload, "turn_id", "turnId")
+    if turn_id:
+        body["turn_id"] = turn_id
+    continuity_content = ""
+    if hook_event == "Stop":
+        continuity_content = first_text(
+            payload, "last_assistant_message", "lastAssistantMessage"
+        )
+    elif hook_event == "UserPromptSubmit":
+        continuity_content = first_text(payload, "prompt", "userPrompt", "message")
+    if continuity_content:
+        body["continuity_content"] = truncate(
+            sanitize_secrets(continuity_content), 20000
+        )
     if tool_name:
         body["tool_name"] = tool_name
     _request("POST", "/api/captures", body)
-
-
-def trigger_promote_captures() -> None:
-    """Best-effort immediate promotion trigger for Stop hooks."""
-    _request("POST", "/api/dreaming/trigger", {"job": "promote-captures"})
 
 
 def emit_session_start_context(text: str) -> None:

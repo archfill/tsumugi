@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { runDreaming } from "../../core/dreaming/runner.js";
 import { saveCapture } from "../../core/capture/save.js";
+import { getCaptureContinuity } from "../../core/capture/continuity.js";
 import { hybridSearch } from "../../core/search/hybrid.js";
 import { resolveSearchFilter } from "../../core/search/resolve-filter.js";
 import { decisionRepo } from "../../data/repos/decision.js";
@@ -44,6 +45,29 @@ restApp.post("/captures", async (c) => {
     const body = await c.req.json();
     const result = await saveCapture(body);
     return c.json({ ...result, layer: "capture" });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return c.json({ error: message }, 400);
+  }
+});
+
+restApp.get("/captures/continuity", async (c) => {
+  try {
+    const projectTag = c.req.query("project_tag");
+    if (!projectTag) {
+      return c.json({ error: "query parameter 'project_tag' is required" }, 400);
+    }
+    const result = await getCaptureContinuity({
+      project_tag: projectTag,
+      exclude_session_id: c.req.query("exclude_session_id"),
+      max_sessions: readLimit(c.req.query("max_sessions"), 3, 5),
+      max_turns_per_session: readLimit(
+        c.req.query("max_turns_per_session"),
+        3,
+        5,
+      ),
+    });
+    return c.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return c.json({ error: message }, 400);

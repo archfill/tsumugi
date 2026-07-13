@@ -12,6 +12,7 @@ inject only — never creates observations.
 from __future__ import annotations
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -19,6 +20,7 @@ from _lib import (
     emit_session_start_context,
     fail_open_exit,
     first_text,
+    get_capture_continuity,
     is_configured,
     list_recent_memories,
     list_recent_observations,
@@ -32,6 +34,7 @@ MEMORY_LIMIT = 8
 OBSERVATION_LIMIT = 6
 MEMORY_EXCERPT_LEN = 140
 OBSERVATION_EXCERPT_LEN = 120
+CONTINUITY_EXCERPT_LEN = 1200
 
 
 RUBRIC = """\
@@ -136,6 +139,23 @@ def _format_search_hits(hits: list[dict]) -> list[str]:
     return lines
 
 
+def _format_continuity(sessions: list[dict]) -> list[str]:
+    if not sessions:
+        return []
+    lines = ["## Pending continuity checkpoints"]
+    for session in sessions:
+        source = session.get("source") or "?"
+        session_id = (session.get("sessionId") or "")[:8]
+        lines.append(f"### {source} session {session_id}")
+        checkpoints = session.get("checkpoints")
+        if not isinstance(checkpoints, list):
+            continue
+        for checkpoint in reversed(checkpoints):
+            if isinstance(checkpoint, str) and checkpoint.strip():
+                lines.append(f"- {truncate(checkpoint.strip(), CONTINUITY_EXCERPT_LEN)}")
+    return lines
+
+
 def main() -> None:
     if not is_configured():
         fail_open_exit()
@@ -151,17 +171,34 @@ def main() -> None:
     if session_id:
         parts.append(f"_session: {session_id}_")
 
-    # Try project-scoped search first; fall back to recent lists if empty.
-    search_hits = search_memory(query=project_tag, limit=MEMORY_LIMIT, project_tag=project_tag)
-    if search_hits:
-        parts.extend(_format_search_hits(search_hits))
-    else:
-        mem_lines = _format_memories(list_recent_memories(limit=MEMORY_LIMIT))
-        obs_lines = _format_observations(
-            list_recent_observations(limit=OBSERVATION_LIMIT)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        search_future = executor.submit(
+            search_memory,
+            query=project_tag,
+            limit=MEMORY_LIMIT,
+            project_tag=project_tag,
         )
-        parts.extend(mem_lines)
-        parts.extend(obs_lines)
+        continuity_future = executor.submit(
+            get_capture_continuity,
+            project_tag=project_tag,
+            exclude_session_id=session_id or None,
+        )
+        search_hits = search_future.result()
+        continuity = continuity_future.result()
+
+        if search_hits:
+            parts.extend(_format_search_hits(search_hits))
+        else:
+            memories_future = executor.submit(
+                list_recent_memories, limit=MEMORY_LIMIT
+            )
+            observations_future = executor.submit(
+                list_recent_observations, limit=OBSERVATION_LIMIT
+            )
+            parts.extend(_format_memories(memories_future.result()))
+            parts.extend(_format_observations(observations_future.result()))
+
+    parts.extend(_format_continuity(continuity))
 
     parts.append("")
     parts.append(RUBRIC)

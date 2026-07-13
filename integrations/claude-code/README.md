@@ -1,6 +1,8 @@
 # tsumugi memory — Claude Code plugin
 
-Claude Code 用 tsumugi メモリ統合。**inject-only hook 3 本**で「過去 memory の再注入」と「save_observation のガイダンス」を agent に渡す。観測作成は **agent 自身が MCP tool で呼ぶ** (ADR-011)。
+Claude Code 用 tsumugi メモリ統合。inject hook に加え、Layer 1 へ deterministic capture を保存する。
+hook は observation を直接作らず LLM も起動しない。観測の primary path は **agent 自身が MCP
+tool で呼ぶ**方式を維持し、capture は scheduled dreaming で選別する (ADR-011 / ADR-014)。
 
 Python script は [Codex 版](../codex/README.md) と同じ内容を持つ。
 
@@ -11,19 +13,22 @@ Python script は [Codex 版](../codex/README.md) と同じ内容を持つ。
 - **観測作成 hook は採用しない** (yui 統合で実証された Layer 1 32% 汚染を構造的に回避)
 - **新規 LLM 呼出を hook から発動しない** (direction-b / ADR-003 整合)
 - **agent の既存 LLM セッションに rubric + 検索結果を inject** することで、agent 主導の `save_observation` 呼出を促す
-- **inject 3 本**: SessionStart / UserPromptSubmit / PreToolUse(Read)
+- **inject**: SessionStart / UserPromptSubmit / PreToolUse(Read)
+- **capture**: UserPromptSubmit / milestone PostToolUse / Stop checkpoint
 
 ## 含まれるもの
 
-### Hook (3 本、全部 inject-only)
+### Hook
 
 | Hook               | matcher                   | 役割                                                                           |
 | ------------------ | ------------------------- | ------------------------------------------------------------------------------ |
-| `SessionStart`     | `startup\|clear\|compact` | 過去 memory + save rubric を inject。compact 時は recall-recovery nudge も追加 |
-| `UserPromptSubmit` | `*`                       | resume / error pattern を検出 → `search_memory` で関連 memory を inject        |
+| `SessionStart`     | `startup\|clear\|compact` | 過去 memory、未昇格 continuity checkpoint、save rubric を bounded inject      |
+| `UserPromptSubmit` | `*`                       | prompt を Layer 1 capture に保存し、必要時は関連 memory も inject              |
 | `PreToolUse`       | `Read`                    | 開いたファイル名で `search_memory` → 関連 memory を inject                     |
+| `PostToolUse`      | `Bash`                    | commit / push / merge / release の milestone だけを Layer 1 capture に保存     |
+| `Stop`             | `*`                       | completed turn checkpoint と final response を Layer 1 capture に保存          |
 
-いずれも観測 (observation) を**作成しない**。
+いずれも観測 (observation) を**直接作成せず、LLM promotion も起動しない**。
 
 ### MCP server (`save_observation` / `search_memory` 等)
 
@@ -31,8 +36,8 @@ plugin に `.mcp.json` を同梱しているため、`/plugin install` 時に **
 
 agent はこれを通じて以下の MCP tool を呼べる:
 
-- `save_observation` — Layer 1 へ観測を保存 (rubric の呼出先)
-- `search_memory` — Layer 1 + Layer 2 を hybrid 検索。デフォルトは project-scoped recall
+- `save_observation` — Layer 2 へ観測を保存 (rubric の呼出先)
+- `search_memory` — Layer 2 + Layer 3 を hybrid 検索。デフォルトは project-scoped recall
 - `mark_memory_outdated` — 古くなった memory を次回 dreaming で archive 候補にする
 - `trigger_dreaming` — Layer 2 synthesize を手動起動
 - `get_dreaming_status` — dreaming 履歴の取得

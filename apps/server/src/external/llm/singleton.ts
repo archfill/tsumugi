@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   loadConfig,
   type LlmModelConfig,
@@ -11,6 +12,57 @@ import { createOpenAiCompatClient } from "./openai-compat.js";
 import type { LlmClient, LlmRequest, LlmResponse, LlmTier } from "./types.js";
 
 const cache = new Map<LlmTier, LlmClient>();
+const providerQueues = new Map<
+  string,
+  { tail: Promise<void>; depth: number }
+>();
+
+function providerKey(cfg: LlmModelConfig): string {
+  const endpoint =
+    cfg.provider === "anthropic" ? "api.anthropic.com" : cfg.baseUrl ?? "";
+  const credential = createHash("sha256")
+    .update(cfg.apiKey)
+    .digest("hex")
+    .slice(0, 12);
+  return `${cfg.provider}:${endpoint}:${credential}`;
+}
+
+async function withProviderAdmission<T>(
+  key: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  let queue = providerQueues.get(key);
+  if (!queue) {
+    queue = { tail: Promise.resolve(), depth: 0 };
+    providerQueues.set(key, queue);
+  }
+
+  const waitFor = queue.tail;
+  let release!: () => void;
+  queue.tail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  queue.depth++;
+  await waitFor;
+  try {
+    return await run();
+  } finally {
+    queue.depth--;
+    release();
+    if (queue.depth === 0 && providerQueues.get(key) === queue) {
+      providerQueues.delete(key);
+    }
+  }
+}
+
+function serializeProvider(inner: LlmClient, cfg: LlmModelConfig): LlmClient {
+  const key = providerKey(cfg);
+  return {
+    complete: (req) => withProviderAdmission(key, () => inner.complete(req)),
+    completeJson: <T>(req: LlmRequest) =>
+      withProviderAdmission(key, () => inner.completeJson<T>(req)),
+  };
+}
 
 function buildBasicClient(tier: LlmTier, cfg: LlmModelConfig): LlmClient {
   if (!cfg.apiKey) {
@@ -39,7 +91,7 @@ function buildBasicClient(tier: LlmTier, cfg: LlmModelConfig): LlmClient {
       break;
     }
   }
-  return instrumentClient(raw, tier, cfg);
+  return serializeProvider(instrumentClient(raw, tier, cfg), cfg);
 }
 
 /**
@@ -168,4 +220,5 @@ export function getLlm(tier: LlmTier): LlmClient {
 
 export function resetLlmCache(): void {
   cache.clear();
+  providerQueues.clear();
 }

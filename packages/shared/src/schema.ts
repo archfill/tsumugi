@@ -30,9 +30,19 @@ export const CaptureInput = z.object({
   source: ClientSource,
   hook_event: z.string().min(1),
   tool_name: z.string().optional(),
+  turn_id: z.string().min(1).optional(),
+  continuity_content: z.string().min(1).max(20_000).optional(),
   raw_content: z.string().min(1),
 });
 export type CaptureInput = z.infer<typeof CaptureInput>;
+
+export const CaptureContinuityInput = z.object({
+  project_tag: z.string().min(1),
+  exclude_session_id: z.string().min(1).optional(),
+  max_sessions: z.number().int().positive().max(5).default(3),
+  max_turns_per_session: z.number().int().positive().max(5).default(3),
+});
+export type CaptureContinuityInput = z.infer<typeof CaptureContinuityInput>;
 
 export const SearchInput = z.object({
   query: z.string().min(1),

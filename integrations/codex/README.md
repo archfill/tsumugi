@@ -18,15 +18,17 @@ Codex は Claude Code と:
 
 | Hook               | matcher                    | 役割                                                                           |
 | ------------------ | -------------------------- | ------------------------------------------------------------------------------ |
-| `SessionStart`     | `startup\|resume\|compact` | 過去 memory + save rubric を inject。compact 時は recall-recovery nudge も追加 |
+| `SessionStart`     | `startup\|resume\|compact` | 過去 memory、未昇格 continuity checkpoint、save rubric を bounded inject |
 | `UserPromptSubmit` | `*`                        | prompt を Layer 1 capture に保存。resume / error pattern では関連 memory も inject |
 | `PreToolUse`       | `Read`                     | 開いたファイル名で `search_memory` → 関連 memory を inject                     |
 | `PostToolUse`      | `Bash`                     | commit / push / merge / release の milestone command だけを Layer 1 capture に保存 |
 | `PreCompact`       | `manual\|auto`             | compact 直前の transcript tail を Layer 1 capture に保存                        |
-| `PostCompact`      | `manual\|auto`             | compact 後の transcript compacted record を Layer 1 capture に保存し、capture promotion を best-effort trigger |
-| `Stop`             | `*`                        | session 終端 payload を Layer 1 capture に保存し、capture promotion を best-effort trigger |
+| `PostCompact`      | `manual\|auto`             | compact 後の transcript compacted record を Layer 1 capture に保存             |
+| `Stop`             | `*`                        | completed turn checkpoint と final response を Layer 1 capture に保存          |
 
-hook は観測 (observation) を**直接作成しない**。自動保存は Layer 1 `captures` に限定し、後段の dreaming が必要なものだけ Layer 2 observation へ昇格する。
+hook は観測 (observation) を**直接作成せず、LLM promotion も起動しない**。自動保存は Layer 1
+`captures` に限定し、scheduled dreaming が completed turn を window 化して必要なものだけ
+Layer 2 observation へ昇格する。
 
 `SessionStart(compact)` は圧縮後に agent へ保存判断を促す inject、`PreCompact` / `PostCompact`
 は圧縮境界の raw context を Layer 1 に退避する capture で、責務が異なる。
@@ -37,8 +39,8 @@ hook は観測 (observation) を**直接作成しない**。自動保存は Laye
 
 agent は以下の MCP tool を呼べる:
 
-- `save_observation` — Layer 1 へ観測を保存
-- `search_memory` — Layer 1 + Layer 2 を hybrid 検索。デフォルトは project-scoped recall
+- `save_observation` — Layer 2 へ観測を保存
+- `search_memory` — Layer 2 + Layer 3 を hybrid 検索。デフォルトは project-scoped recall
 - `mark_memory_outdated` — 古くなった memory を次回 dreaming で archive 候補にする
 - `trigger_dreaming` — Layer 2 synthesize を手動起動
 - `get_dreaming_status` — dreaming 履歴の取得

@@ -12,7 +12,6 @@ from _lib import (
     is_configured,
     read_hook_input,
     save_compact_capture,
-    trigger_promote_captures,
 )
 
 
@@ -21,7 +20,6 @@ def main() -> None:
         fail_open_exit()
     payload = read_hook_input()
     save_compact_capture(payload, "PostCompact")
-    trigger_promote_captures()
     fail_open_exit()
 
 

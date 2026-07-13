@@ -21,7 +21,9 @@ export interface LlmTierConfig {
  */
 export interface SchedulerConfig {
   enabled: boolean;
-  promote: string; // promote-observations
+  promoteCaptures: string;
+  promoteObservations: string;
+  sweepCaptures: string;
   synthesize: string;
   timeUpdate: string;
   decisionContradiction: string;
@@ -114,7 +116,15 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
     },
     scheduler: {
       enabled: process.env["DREAMING_SCHEDULER_ENABLED"] !== "false",
-      promote: process.env["DREAMING_SCHEDULE_PROMOTE"] ?? "*/30 * * * *",
+      promoteCaptures:
+        process.env["DREAMING_SCHEDULE_PROMOTE_CAPTURES"] ??
+        "0,30 * * * *",
+      promoteObservations:
+        process.env["DREAMING_SCHEDULE_PROMOTE_OBSERVATIONS"] ??
+        process.env["DREAMING_SCHEDULE_PROMOTE"] ??
+        "5,35 * * * *",
+      sweepCaptures:
+        process.env["DREAMING_SCHEDULE_SWEEP_CAPTURES"] ?? "30 2 * * *",
       synthesize: process.env["DREAMING_SCHEDULE_SYNTHESIZE"] ?? "0 */6 * * *",
       timeUpdate: process.env["DREAMING_SCHEDULE_TIME_UPDATE"] ?? "0 3 * * *",
       decisionContradiction:

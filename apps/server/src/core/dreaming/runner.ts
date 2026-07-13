@@ -10,11 +10,10 @@
  *   const result = await runDreaming({ job: 'reflection', sessionId: 'ses_...' });
  */
 
-import { observationRepo } from "../../data/repos/observation.js";
 import { captureRepo } from "../../data/repos/capture.js";
+import { capturePromotionWindowRepo } from "../../data/repos/capture-promotion-window.js";
 import { promoteCaptures } from "../capture/promote.js";
-import { summarizeObservation } from "../observation/summarize.js";
-import { audnJudge } from "./audn.js";
+import { promoteObservations } from "../observation/promote.js";
 import { synthesizeMemories } from "./synthesize.js";
 import { timeAwareMemoryUpdate } from "./time-update.js";
 import { detectDecisionContradictions } from "./decision-contradiction.js";
@@ -84,53 +83,14 @@ async function stepPromoteObservations(
   maxObservations: number,
 ): Promise<DreamingStepResult> {
   try {
-    const observations = await observationRepo.listPending(maxObservations);
-    let promoted = 0;
-    let skipped = 0;
-    const errors: string[] = [];
-
-    for (const observation of observations) {
-      try {
-        const summary = await summarizeObservation(observation);
-        if (summary.skip) {
-          await observationRepo.markPromoted(observation.id);
-          skipped++;
-          continue;
-        }
-        let hasAudnError = false;
-        // Call AUDN judge for each fact extracted from this observation.
-        for (const fact of summary.facts) {
-          try {
-            await audnJudge({
-              newFact: fact,
-              sourceObservationId: observation.id,
-            });
-          } catch (err) {
-            hasAudnError = true;
-            const msg = err instanceof Error ? err.message : String(err);
-            errors.push(`audn(obs=${observation.id}): ${msg}`);
-          }
-        }
-        if (hasAudnError) {
-          continue;
-        }
-        await observationRepo.markPromoted(observation.id);
-        promoted++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        errors.push(`summarize(obs=${observation.id}): ${msg}`);
-      }
-    }
-
+    const result = await promoteObservations({
+      maxObservations,
+      maxFacts: maxObservations,
+    });
     return {
       name: "promote-observations",
-      ok: true,
-      detail: {
-        total: observations.length,
-        promoted,
-        skipped,
-        errors,
-      },
+      ok: result.errors.length === 0,
+      detail: result,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -149,7 +109,7 @@ async function stepPromoteCaptures(
     const result = await promoteCaptures(maxCaptures);
     return {
       name: "promote-captures",
-      ok: true,
+      ok: result.errors.length === 0,
       detail: result,
     };
   } catch (err) {
@@ -164,14 +124,16 @@ async function stepPromoteCaptures(
 
 async function stepSweepCaptures(): Promise<DreamingStepResult> {
   try {
-    const [deletedPromoted, deletedExpired] = await Promise.all([
-      captureRepo.deletePromoted(),
-      captureRepo.sweepExpired(),
-    ]);
+    const [deletedPromoted, deletedExpired, clearedWindowContent] =
+      await Promise.all([
+        captureRepo.deletePromoted(),
+        captureRepo.sweepExpired(),
+        capturePromotionWindowRepo.clearExpiredContent(),
+      ]);
     return {
       name: "sweep-captures",
       ok: true,
-      detail: { deletedPromoted, deletedExpired },
+      detail: { deletedPromoted, deletedExpired, clearedWindowContent },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -292,7 +254,7 @@ export async function runDreaming(
     job,
     sessionId,
     maxObservations = 50,
-    maxCaptures = 50,
+    maxCaptures = 200,
     maxMemories = 500,
     maxUpdates = 50,
     timeUpdateMaxRunMs,

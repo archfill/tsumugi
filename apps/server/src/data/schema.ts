@@ -17,7 +17,9 @@ import {
   timestamp,
   primaryKey,
   integer,
+  boolean,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { vector } from "drizzle-orm/pg-core";
 
@@ -36,6 +38,12 @@ export const captures = pgTable(
     hook_event: text("hook_event").notNull(),
     /** Tool name for PostToolUse events. */
     tool_name: text("tool_name"),
+    /** Client conversation turn identifier when the hook exposes one. */
+    turn_id: text("turn_id"),
+    /** Sanitized text safe for bounded SessionStart continuity injection. */
+    continuity_content: text("continuity_content"),
+    /** Fingerprint of the sanitized raw payload for diagnostics and matching. */
+    content_hash: text("content_hash").notNull(),
     raw_content: text("raw_content").notNull(),
     captured_at: timestamp("captured_at", { withTimezone: true })
       .notNull()
@@ -48,6 +56,11 @@ export const captures = pgTable(
     ),
     promoted_at: timestamp("promoted_at", { withTimezone: true }),
     skip_reason: text("skip_reason"),
+    /** ready | windowed | promoted | skipped | legacy_partial */
+    promotion_state: text("promotion_state").notNull().default("ready"),
+    promotion_window_id: text("promotion_window_id").references(
+      () => capturePromotionWindows.id,
+    ),
   },
   (table) => [
     index("idx_captures_session_captured").on(
@@ -58,8 +71,26 @@ export const captures = pgTable(
     index("idx_captures_unpromoted")
       .on(table.captured_at)
       .where(
-        sql`${table.promoted_to_obs_id} IS NULL AND ${table.skip_reason} IS NULL`,
+        sql`${table.promoted_to_obs_id} IS NULL AND ${table.skip_reason} IS NULL AND ${table.promotion_state} = 'ready'`,
       ),
+    index("idx_captures_continuity").on(
+      table.project_tag,
+      table.captured_at.desc(),
+    ),
+    uniqueIndex("uq_captures_turn_checkpoint")
+      .on(table.source, table.session_id, table.hook_event, table.turn_id)
+      .where(
+        sql`${table.turn_id} IS NOT NULL AND ${table.hook_event} IN ('UserPromptSubmit', 'Stop')`,
+      ),
+    uniqueIndex("uq_captures_turn_content_event")
+      .on(
+        table.source,
+        table.session_id,
+        table.hook_event,
+        table.turn_id,
+        table.content_hash,
+      )
+      .where(sql`${table.turn_id} IS NOT NULL`),
   ],
 );
 
@@ -91,6 +122,8 @@ export const observations = pgTable("observations", {
     .defaultNow(),
   /** NULL = not yet promoted to Layer 2 by the dreaming worker */
   promoted_at: timestamp("promoted_at", { withTimezone: true }),
+  /** ready | processing | completed | skipped | quarantined | legacy_partial */
+  promotion_state: text("promotion_state").notNull().default("ready"),
   /**
    * pg_bigm 検索用の生成列。content と facts を結合し、コードシンボル等が
    * facts[] にしかない場合でも bigram マッチでヒットさせる。
@@ -102,6 +135,124 @@ export const observations = pgTable("observations", {
 
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Durable promotion orchestration
+// ---------------------------------------------------------------------------
+export const capturePromotionWindows = pgTable(
+  "capture_promotion_windows",
+  {
+    id: text("id").primaryKey(),
+    source: text("source").notNull(),
+    session_id: text("session_id").notNull(),
+    project_tag: text("project_tag"),
+    /** pending | processing | completed | skipped | deferred | quarantined */
+    /** pending | processing | committing | completed | skipped | deferred | quarantined | expired */
+    status: text("status").notNull().default("pending"),
+    cutoff_at: timestamp("cutoff_at", { withTimezone: true }).notNull(),
+    capture_count: integer("capture_count").notNull(),
+    raw_chars: integer("raw_chars").notNull(),
+    completed_turns: integer("completed_turns").notNull().default(0),
+    fallback: boolean("fallback").notNull().default(false),
+    /** Cleared after terminal state or the Layer 1 retention horizon. */
+    input_content: text("input_content"),
+    attempt_count: integer("attempt_count").notNull().default(0),
+    next_attempt_at: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lease_expires_at: timestamp("lease_expires_at", { withTimezone: true }),
+    last_error: text("last_error"),
+    observation_id: text("observation_id").references(() => observations.id),
+    created_at: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completed_at: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("idx_capture_windows_eligible").on(
+      table.status,
+      table.next_attempt_at,
+      table.created_at,
+    ),
+  ],
+);
+
+export type CapturePromotionWindow =
+  typeof capturePromotionWindows.$inferSelect;
+export type NewCapturePromotionWindow =
+  typeof capturePromotionWindows.$inferInsert;
+
+export const captureObservationLinks = pgTable(
+  "capture_observation_links",
+  {
+    // Capture rows are TTL-bound; keep the identifier after raw data expires.
+    capture_id: text("capture_id").notNull(),
+    observation_id: text("observation_id")
+      .notNull()
+      .references(() => observations.id),
+    window_id: text("window_id")
+      .notNull()
+      .references(() => capturePromotionWindows.id),
+    created_at: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.capture_id, table.observation_id] }),
+    index("idx_capture_observation_window").on(table.window_id),
+  ],
+);
+
+export const observationPromotionFacts = pgTable(
+  "observation_promotion_facts",
+  {
+    id: text("id").primaryKey(),
+    observation_id: text("observation_id")
+      .notNull()
+      .references(() => observations.id),
+    fact_hash: text("fact_hash").notNull(),
+    fact: text("fact").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    /** pending | processing | committing | completed | deferred | quarantined */
+    status: text("status").notNull().default("pending"),
+    attempt_count: integer("attempt_count").notNull().default(0),
+    next_attempt_at: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lease_expires_at: timestamp("lease_expires_at", { withTimezone: true }),
+    last_error: text("last_error"),
+    decision: text("decision"),
+    target_memory_id: text("target_memory_id"),
+    result_memory_id: text("result_memory_id"),
+    reasoning: text("reasoning"),
+    created_at: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completed_at: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("uq_observation_fact_hash").on(
+      table.observation_id,
+      table.fact_hash,
+    ),
+    index("idx_observation_facts_eligible").on(
+      table.status,
+      table.next_attempt_at,
+      table.created_at,
+    ),
+  ],
+);
+
+export type ObservationPromotionFact =
+  typeof observationPromotionFacts.$inferSelect;
+export type NewObservationPromotionFact =
+  typeof observationPromotionFacts.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Layer 3: memories

@@ -8,15 +8,18 @@
  *   - 実行履歴は既存の dreamingRunRepo / runner に乗る
  *
  * Default schedule:
- *   - promote-captures           : every 30 min   (*\/30 * * * *)
- *   - promote-observations       : every 30 min   (*\/30 * * * *)
+ *   - promote-captures           : minute 0,30     (0,30 * * * *)
+ *   - promote-observations       : minute 5,35     (5,35 * * * *)
+ *   - sweep-captures             : daily 02:30    (30 2 * * *)
  *   - synthesize                 : every 6 hours  (0 *\/6 * * *)
  *   - time-update                : daily 03:00    (0 3 * * *)
  *   - decision-contradiction     : weekly Sun 04  (0 4 * * 0)
  *
  * 環境変数:
  *   DREAMING_SCHEDULER_ENABLED               = "false" で全停止
- *   DREAMING_SCHEDULE_PROMOTE                = "*\/30 * * * *" (空で無効)
+ *   DREAMING_SCHEDULE_PROMOTE_CAPTURES       = "0,30 * * * *"
+ *   DREAMING_SCHEDULE_PROMOTE_OBSERVATIONS   = "5,35 * * * *"
+ *   DREAMING_SCHEDULE_SWEEP_CAPTURES         = "30 2 * * *"
  *   DREAMING_SCHEDULE_SYNTHESIZE             = "0 *\/6 * * *"
  *   DREAMING_SCHEDULE_TIME_UPDATE            = "0 3 * * *"
  *   DREAMING_SCHEDULE_DECISION_CONTRADICTION = "0 4 * * 0"
@@ -101,8 +104,13 @@ export function startScheduler(
   }
 
   const tasks: ScheduledTask[] = [];
-  scheduleOne("promote-observations", config.promote, tasks);
-  scheduleOne("promote-captures", config.promote, tasks);
+  scheduleOne("promote-captures", config.promoteCaptures, tasks);
+  scheduleOne(
+    "promote-observations",
+    config.promoteObservations,
+    tasks,
+  );
+  scheduleOne("sweep-captures", config.sweepCaptures, tasks);
   scheduleOne("synthesize", config.synthesize, tasks);
   scheduleOne("time-update", config.timeUpdate, tasks);
   scheduleOne("decision-contradiction", config.decisionContradiction, tasks);

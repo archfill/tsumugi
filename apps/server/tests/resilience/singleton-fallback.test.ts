@@ -58,7 +58,9 @@ function configWithFallback(): Config {
     },
     scheduler: {
       enabled: false,
-      promote: "",
+      promoteCaptures: "",
+      promoteObservations: "",
+      sweepCaptures: "",
       synthesize: "",
       timeUpdate: "",
       decisionContradiction: "",
@@ -111,6 +113,35 @@ describe("LLM singleton fallback", () => {
     });
     expect(singletonState.primary.complete).toHaveBeenCalledTimes(1);
     expect(singletonState.fallback.complete).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent calls for the same provider credential", async () => {
+    let releaseFirst!: () => void;
+    const firstCall = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    singletonState.primary.complete
+      .mockImplementationOnce(async () => {
+        await firstCall;
+        return { text: "first" };
+      })
+      .mockResolvedValueOnce({ text: "second" });
+
+    const { getLlm } = await loadSingleton();
+    const client = getLlm("low");
+    const first = client.complete(request);
+    const second = client.complete(request);
+
+    await vi.waitFor(() => {
+      expect(singletonState.primary.complete).toHaveBeenCalledTimes(1);
+    });
+    releaseFirst();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { text: "first" },
+      { text: "second" },
+    ]);
+    expect(singletonState.primary.complete).toHaveBeenCalledTimes(2);
   });
 
   it("throws a combined error when primary and fallback both fail", async () => {

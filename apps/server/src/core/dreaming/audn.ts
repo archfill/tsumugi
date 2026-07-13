@@ -39,6 +39,13 @@ export interface AudnJudgeInput {
   topK?: number;
 }
 
+export interface AudnPlan {
+  decision: AudnDecision;
+  targetMemoryId?: string;
+  narrative?: string;
+  reasoning: string;
+}
+
 // ---------------------------------------------------------------------------
 // LLM prompt
 // ---------------------------------------------------------------------------
@@ -203,6 +210,57 @@ Decide which (if any) memory is the target, or whether to add a new one.`;
 export async function audnJudge(input: AudnJudgeInput): Promise<AudnResult> {
   const { newFact, sourceObservationId, topK = 5 } = input;
 
+  const plan = await planAudn({ newFact, topK });
+
+  switch (plan.decision) {
+    case "ADD":
+      return await addMemory(plan.narrative || newFact, sourceObservationId);
+
+    case "UPDATE": {
+      const narrative = plan.narrative || newFact;
+      const embedding = Array.from(await getEmbedder().embed(narrative));
+      await memoryRepo.update(plan.targetMemoryId!, { narrative, embedding });
+      await linkRepo.insert({
+        from_id: sourceObservationId,
+        to_id: plan.targetMemoryId!,
+        from_layer: "observation",
+        to_layer: "memory",
+        relation: "derived_from",
+      });
+      return {
+        decision: "UPDATE",
+        targetMemoryId: plan.targetMemoryId,
+        resultMemoryId: plan.targetMemoryId,
+        reasoning: plan.reasoning,
+      };
+    }
+
+    case "DELETE":
+      await memoryRepo.archive(plan.targetMemoryId!);
+      await linkRepo.insert({
+        from_id: sourceObservationId,
+        to_id: plan.targetMemoryId!,
+        from_layer: "observation",
+        to_layer: "memory",
+        relation: "supersedes",
+      });
+      return {
+        decision: "DELETE",
+        targetMemoryId: plan.targetMemoryId,
+        reasoning: plan.reasoning,
+      };
+
+    case "NOOP":
+      return { decision: "NOOP", reasoning: plan.reasoning };
+  }
+}
+
+export async function planAudn(input: {
+  newFact: string;
+  topK?: number;
+}): Promise<AudnPlan> {
+  const { newFact, topK = 5 } = input;
+
   // 1. Retrieve similar existing memories.
   const hits = await hybridSearch(
     { query: newFact, limit: topK },
@@ -218,7 +276,11 @@ export async function audnJudge(input: AudnJudgeInput): Promise<AudnResult> {
 
   // 3. Fast-path: no existing memories → always ADD without calling LLM.
   if (existingMemories.length === 0) {
-    return await addMemory(newFact, sourceObservationId);
+    return {
+      decision: "ADD",
+      narrative: newFact,
+      reasoning: "No similar memory found — create new memory.",
+    };
   }
 
   // 4. Call pure judgement (same LLM call path that bench exercises).
@@ -245,46 +307,31 @@ export async function audnJudge(input: AudnJudgeInput): Promise<AudnResult> {
       {
         targetIndex: target_index,
         memoryCount: existingMemories.length,
-        sourceObservationId,
       },
       "AUDN target_index out of range, fallback to NOOP",
     );
     return { decision: "NOOP", reasoning };
   }
 
-  // 6. Apply decision.
+  // 6. Return a side-effect-free plan. The durable fact worker applies it in
+  // one DB transaction together with provenance and fact completion.
   switch (audnDecision) {
     case "ADD":
-      return await addMemory(new_narrative || newFact, sourceObservationId);
+      return {
+        decision: "ADD",
+        narrative: new_narrative || newFact,
+        reasoning,
+      };
 
-    case "UPDATE": {
-      const narrative = new_narrative || newFact;
-      const embedding = Array.from(await getEmbedder().embed(narrative));
-      await memoryRepo.update(targetMemory!.id, { narrative, embedding });
-      await linkRepo.insert({
-        from_id: sourceObservationId,
-        to_id: targetMemory!.id,
-        from_layer: "observation",
-        to_layer: "memory",
-        relation: "derived_from",
-      });
+    case "UPDATE":
       return {
         decision: "UPDATE",
         targetMemoryId: targetMemory!.id,
-        resultMemoryId: targetMemory!.id,
+        narrative: new_narrative || newFact,
         reasoning,
       };
-    }
 
     case "DELETE":
-      await memoryRepo.archive(targetMemory!.id);
-      await linkRepo.insert({
-        from_id: sourceObservationId,
-        to_id: targetMemory!.id,
-        from_layer: "observation",
-        to_layer: "memory",
-        relation: "supersedes",
-      });
       return {
         decision: "DELETE",
         targetMemoryId: targetMemory!.id,

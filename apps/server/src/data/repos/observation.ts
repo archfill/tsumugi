@@ -39,19 +39,30 @@ export const observationRepo = {
     );
     return Number(r.rows[0]?.n ?? 0);
   },
-  // dreaming worker: observations not yet promoted to Layer 2
+  // Durable promotion worker: oldest observations that still need fact rows.
   async listPending(limit = 50): Promise<ObservationRow[]> {
     return await db
       .select()
       .from(observations)
-      .where(isNull(observations.promoted_at))
-      .orderBy(desc(observations.created_at))
+      .where(
+        and(
+          isNull(observations.promoted_at),
+          eq(observations.promotion_state, "ready"),
+        ),
+      )
+      .orderBy(observations.created_at)
       .limit(limit);
   },
   async markPromoted(id: string, promotedAt = new Date()): Promise<void> {
     await db
       .update(observations)
-      .set({ promoted_at: promotedAt })
+      .set({ promoted_at: promotedAt, promotion_state: "completed" })
+      .where(eq(observations.id, id));
+  },
+  async markSkipped(id: string, promotedAt = new Date()): Promise<void> {
+    await db
+      .update(observations)
+      .set({ promoted_at: promotedAt, promotion_state: "skipped" })
       .where(eq(observations.id, id));
   },
   async listForSession(

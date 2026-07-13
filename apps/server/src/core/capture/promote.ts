@@ -1,59 +1,95 @@
+import { createHash } from "node:crypto";
 import { captureRepo } from "../../data/repos/capture.js";
-import type { CaptureRow } from "../../data/repos/capture.js";
+import { capturePromotionWindowRepo } from "../../data/repos/capture-promotion-window.js";
 import { withPgAdvisoryLock } from "../../data/advisory-lock.js";
-import { observationRepo } from "../../data/repos/observation.js";
 import { getEmbedder } from "../../external/embedding/singleton.js";
 import { newId } from "../../lib/id.js";
 import { summarizeObservation } from "../observation/summarize.js";
-import { audnJudge } from "../dreaming/audn.js";
+import { buildCaptureWindows } from "./window.js";
 
 export type PromoteCapturesStoppedReason =
   | "completed"
-  | "active_run_in_progress";
+  | "active_run_in_progress"
+  | "run_budget_exceeded"
+  | "failure_budget_exceeded";
 
 export interface PromoteCapturesResult {
-  total: number;
+  capturesSelected: number;
+  windowsCreated: number;
+  windowsSelected: number;
   promoted: number;
   skipped: number;
+  deferred: number;
+  quarantined: number;
   deletedPromoted: number;
   runSkipped: boolean;
   stoppedReason: PromoteCapturesStoppedReason;
   errors: string[];
 }
 
-function captureAsObservation(capture: CaptureRow) {
+function syntheticObservation(
+  window: Awaited<
+    ReturnType<typeof capturePromotionWindowRepo.listEligible>
+  >[number],
+) {
   return {
-    id: capture.id,
-    content: capture.raw_content,
+    id: window.id,
+    content: window.input_content ?? "",
     type: "other",
-    source: capture.source,
+    source: window.source,
     source_layer: "capture",
-    session_id: capture.session_id,
-    project_tag: capture.project_tag,
+    session_id: window.session_id,
+    project_tag: window.project_tag,
     facts: null,
     metadata: {
-      capture_id: capture.id,
-      hook_event: capture.hook_event,
-      tool_name: capture.tool_name,
-      captured_at: capture.captured_at.toISOString(),
+      promotion_window_id: window.id,
+      capture_count: window.capture_count,
+      completed_turns: window.completed_turns,
+      fallback: window.fallback,
     },
     embedding: null,
-    created_at: capture.captured_at,
+    created_at: window.cutoff_at,
     promoted_at: null,
-    search_text: capture.raw_content,
+    promotion_state: "ready",
+    search_text: window.input_content ?? "",
   };
 }
 
+function factRows(observationId: string, facts: string[]) {
+  const unique = [...new Set(facts.map((fact) => fact.trim()).filter(Boolean))];
+  return unique.map((fact, ordinal) => ({
+    id: newId("fact"),
+    observation_id: observationId,
+    fact_hash: createHash("sha256").update(fact).digest("hex"),
+    fact,
+    ordinal,
+  }));
+}
+
 export async function promoteCaptures(
-  maxCaptures = 50,
+  maxCaptures = 200,
+  options?: {
+    maxWindows?: number;
+    maxRunMs?: number;
+    maxFailures?: number;
+  },
 ): Promise<PromoteCapturesResult> {
   return await withPgAdvisoryLock(
     "tsumugi:promote-captures",
-    () => promoteCapturesLocked(maxCaptures),
+    () =>
+      promoteCapturesLocked(maxCaptures, {
+        maxWindows: options?.maxWindows ?? 10,
+        maxRunMs: options?.maxRunMs ?? 10 * 60 * 1000,
+        maxFailures: options?.maxFailures ?? 5,
+      }),
     async () => ({
-      total: 0,
+      capturesSelected: 0,
+      windowsCreated: 0,
+      windowsSelected: 0,
       promoted: 0,
       skipped: 0,
+      deferred: 0,
+      quarantined: 0,
       deletedPromoted: 0,
       runSkipped: true,
       stoppedReason: "active_run_in_progress",
@@ -64,78 +100,123 @@ export async function promoteCaptures(
 
 async function promoteCapturesLocked(
   maxCaptures: number,
+  options: { maxWindows: number; maxRunMs: number; maxFailures: number },
 ): Promise<PromoteCapturesResult> {
-  const captures = await captureRepo.listUnpromoted(maxCaptures);
+  const startedAt = Date.now();
+  const ready = await captureRepo.listReady(maxCaptures);
+  const candidates = buildCaptureWindows(ready);
+  let windowsCreated = 0;
+  for (const candidate of candidates) {
+    const windowId = newId("win");
+    await capturePromotionWindowRepo.create(
+      {
+        id: windowId,
+        source: candidate.source,
+        session_id: candidate.sessionId,
+        project_tag: candidate.projectTag,
+        cutoff_at: candidate.cutoffAt,
+        capture_count: candidate.captureIds.length,
+        raw_chars: candidate.rawChars,
+        completed_turns: candidate.completedTurns,
+        fallback: candidate.fallback,
+        input_content: candidate.content,
+      },
+      candidate.captureIds,
+    );
+    windowsCreated++;
+  }
+
+  const windows = await capturePromotionWindowRepo.listEligible(
+    options.maxWindows,
+  );
   let promoted = 0;
   let skipped = 0;
-  let deletedPromoted = 0;
+  let deferred = 0;
+  let quarantined = 0;
+  let failures = 0;
+  let stoppedReason: PromoteCapturesStoppedReason = "completed";
   const errors: string[] = [];
 
-  for (const capture of captures) {
+  for (const window of windows) {
+    if (Date.now() - startedAt >= options.maxRunMs) {
+      stoppedReason = "run_budget_exceeded";
+      break;
+    }
+    if (failures >= options.maxFailures) {
+      stoppedReason = "failure_budget_exceeded";
+      break;
+    }
+    const claimedWindow = await capturePromotionWindowRepo.claim(window.id);
+    if (!claimedWindow) continue;
+    const captures = await captureRepo.listForWindow(claimedWindow.id);
     try {
-      const summary = await summarizeObservation(captureAsObservation(capture));
+      const summary = await summarizeObservation(
+        syntheticObservation(claimedWindow),
+      );
       if (summary.skip) {
-        await captureRepo.markSkipped(capture.id, summary.reasoning);
+        await capturePromotionWindowRepo.skip(
+          claimedWindow,
+          captures.map((capture) => capture.id),
+          summary.reasoning,
+        );
         skipped++;
         continue;
       }
 
       const observationId = newId("obs");
       const embedding = await getEmbedder().embed(summary.narrative);
-
-      await observationRepo.insert({
-        id: observationId,
-        content: summary.narrative,
-        type: "other",
-        source: capture.source,
-        source_layer: "capture",
-        session_id: capture.session_id,
-        project_tag: capture.project_tag,
-        facts: summary.facts,
-        metadata: {
-          capture_id: capture.id,
-          hook_event: capture.hook_event,
-          tool_name: capture.tool_name,
-          promoted_reasoning: summary.reasoning,
+      await capturePromotionWindowRepo.complete({
+        window: claimedWindow,
+        captureIds: captures.map((capture) => capture.id),
+        observation: {
+          id: observationId,
+          content: summary.narrative,
+          type: "other",
+          source: claimedWindow.source,
+          source_layer: "capture",
+          session_id: claimedWindow.session_id,
+          project_tag: claimedWindow.project_tag,
+          facts: summary.facts,
+          metadata: {
+            promotion_window_id: claimedWindow.id,
+            capture_ids: captures.map((capture) => capture.id),
+            completed_turns: claimedWindow.completed_turns,
+            fallback: claimedWindow.fallback,
+            promoted_reasoning: summary.reasoning,
+          },
+          embedding: Array.from(embedding),
+          promotion_state: summary.facts.length > 0 ? "processing" : "completed",
         },
-        embedding: Array.from(embedding),
+        facts: factRows(observationId, summary.facts),
       });
-      await captureRepo.markPromoted(capture.id, observationId);
-
-      let hasAudnError = false;
-      for (const fact of summary.facts) {
-        try {
-          await audnJudge({
-            newFact: fact,
-            sourceObservationId: observationId,
-          });
-        } catch (err) {
-          hasAudnError = true;
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`audn(capture=${capture.id}): ${msg}`);
-        }
-      }
-      if (hasAudnError) {
-        continue;
-      }
-
-      await observationRepo.markPromoted(observationId);
       promoted++;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`promote(capture=${capture.id}): ${msg}`);
+      failures++;
+      const message = err instanceof Error ? err.message : String(err);
+      const outcome = await capturePromotionWindowRepo.defer(
+        claimedWindow,
+        message,
+      );
+      if (outcome.updated) {
+        if (outcome.quarantined) quarantined++;
+        else deferred++;
+      }
+      errors.push(`window(${claimedWindow.id}): ${message}`);
     }
   }
 
-  deletedPromoted = await captureRepo.deletePromoted();
-
+  const deletedPromoted = await captureRepo.deletePromoted();
   return {
-    total: captures.length,
+    capturesSelected: ready.length,
+    windowsCreated,
+    windowsSelected: windows.length,
     promoted,
     skipped,
+    deferred,
+    quarantined,
     deletedPromoted,
     runSkipped: false,
-    stoppedReason: "completed",
+    stoppedReason,
     errors,
   };
 }
