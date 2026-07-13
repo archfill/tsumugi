@@ -9,11 +9,12 @@
  */
 
 import { getLlm } from "../../external/llm/index.js";
+import { assertLlmAvailable } from "../../external/llm/singleton.js";
 import { getEmbedder } from "../../external/embedding/singleton.js";
 import { memoryRepo } from "../../data/repos/memory.js";
 import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { newId } from "../../lib/id.js";
-import { ExternalError } from "../../lib/errors.js";
+import { ExternalError, ProviderUnavailableError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -47,7 +48,8 @@ export type TimeUpdateStoppedReason =
   | "active_run_in_progress"
   | "time_budget_exceeded"
   | "failure_budget_exceeded"
-  | "consecutive_failure_budget_exceeded";
+  | "consecutive_failure_budget_exceeded"
+  | "provider_cooldown";
 
 // ---------------------------------------------------------------------------
 // Internal LLM response shape
@@ -353,6 +355,7 @@ export async function timeAwareMemoryUpdate(opts?: {
       if (!needsRewrite) continue;
 
       try {
+        assertLlmAvailable("low");
         // 4. Rewrite narrative via LLM.
         const { narrative: newNarrative } = await timeUpdateOnly({
           narrative: memory.narrative,
@@ -374,6 +377,11 @@ export async function timeAwareMemoryUpdate(opts?: {
         updated++;
         consecutiveFailures = 0;
       } catch (err) {
+        if (err instanceof ProviderUnavailableError) {
+          stoppedReason = "provider_cooldown";
+          errors.push(`provider: ${errorMessage(err)}`);
+          break;
+        }
         // Layer 2 failure tracking: record per-memory failure + maybe quarantine.
         const { quarantined } = await memoryRepo.recordLlmFailure(memory.id);
         failed++;
@@ -391,23 +399,32 @@ export async function timeAwareMemoryUpdate(opts?: {
       }
     }
 
-    // 7. Mark run completed.
-    await dreamingRunRepo.markCompleted(runId, updated + archivedOutdated, {
-      ...buildRunMetadata({
-        scanned,
-        updated,
-        archivedOutdated,
-        failed,
-        stoppedReason,
-        durationMs: Date.now() - startedMs,
-        maxRunMs,
-        maxUpdates,
-        maxFailures,
-        maxConsecutiveFailures,
-        staleRunsMarked,
-        errors,
-      }),
+    const runMetadata = buildRunMetadata({
+      scanned,
+      updated,
+      archivedOutdated,
+      failed,
+      stoppedReason,
+      durationMs: Date.now() - startedMs,
+      maxRunMs,
+      maxUpdates,
+      maxFailures,
+      maxConsecutiveFailures,
+      staleRunsMarked,
+      errors,
     });
+    if (errors.length > 0) {
+      await dreamingRunRepo.markPartial(
+        runId,
+        updated + archivedOutdated,
+        errors.join("\n"),
+        { ...runMetadata },
+      );
+    } else {
+      await dreamingRunRepo.markCompleted(runId, updated + archivedOutdated, {
+        ...runMetadata,
+      });
+    }
 
     return {
       runId,

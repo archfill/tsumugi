@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ProviderUnavailableError } from "../../src/lib/errors.js";
 
 const memoryRepoMock = vi.hoisted(() => ({
   archiveOutdated: vi.fn(),
@@ -15,6 +16,7 @@ const dreamingRunRepoMock = vi.hoisted(() => ({
   markStaleRunning: vi.fn(),
   update: vi.fn(),
   markCompleted: vi.fn(),
+  markPartial: vi.fn(),
   markFailed: vi.fn(),
 }));
 
@@ -25,6 +27,7 @@ const llmMock = vi.hoisted(() => ({
 const embedderMock = vi.hoisted(() => ({
   embed: vi.fn(),
 }));
+const assertLlmAvailableMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../src/data/repos/memory.js", () => ({
   memoryRepo: memoryRepoMock,
@@ -40,6 +43,10 @@ vi.mock("../../src/external/embedding/singleton.js", () => ({
 
 vi.mock("../../src/external/llm/index.js", () => ({
   getLlm: () => llmMock,
+}));
+
+vi.mock("../../src/external/llm/singleton.js", () => ({
+  assertLlmAvailable: assertLlmAvailableMock,
 }));
 
 const { timeAwareMemoryUpdate } = await import(
@@ -69,9 +76,11 @@ describe("timeAwareMemoryUpdate outdated handling", () => {
     dreamingRunRepoMock.markStaleRunning.mockReset();
     dreamingRunRepoMock.update.mockReset();
     dreamingRunRepoMock.markCompleted.mockReset();
+    dreamingRunRepoMock.markPartial.mockReset();
     dreamingRunRepoMock.markFailed.mockReset();
     llmMock.completeJson.mockReset();
     embedderMock.embed.mockReset();
+    assertLlmAvailableMock.mockReset();
     dreamingRunRepoMock.findRunningByKind.mockResolvedValue(null);
     dreamingRunRepoMock.markStaleRunning.mockResolvedValue(0);
     embedderMock.embed.mockResolvedValue(new Float32Array([0.1, 0.2]));
@@ -139,9 +148,10 @@ describe("timeAwareMemoryUpdate outdated handling", () => {
     });
 
     expect(memoryRepoMock.recordLlmFailure).toHaveBeenCalledTimes(1);
-    expect(dreamingRunRepoMock.markCompleted).toHaveBeenCalledWith(
+    expect(dreamingRunRepoMock.markPartial).toHaveBeenCalledWith(
       result.runId,
       0,
+      expect.stringContaining("LLM timeout"),
       expect.objectContaining({
         failed: 1,
         stoppedReason: "failure_budget_exceeded",
@@ -173,6 +183,33 @@ describe("timeAwareMemoryUpdate outdated handling", () => {
       scanned: 1,
       updated: 0,
       stoppedReason: "time_budget_exceeded",
+    });
+  });
+
+  it("provider cooldown は memory failure を増やさず run を停止する", async () => {
+    memoryRepoMock.archiveOutdated.mockResolvedValueOnce(0);
+    memoryRepoMock.listLlmEligible.mockResolvedValueOnce([agedMemory("mem_1")]);
+    assertLlmAvailableMock.mockImplementationOnce(() => {
+      throw new ProviderUnavailableError("provider cooling down", "circuit_open");
+    });
+
+    const result = await timeAwareMemoryUpdate();
+
+    expect(memoryRepoMock.recordLlmFailure).not.toHaveBeenCalled();
+    expect(llmMock.completeJson).not.toHaveBeenCalled();
+    expect(dreamingRunRepoMock.markPartial).toHaveBeenCalledWith(
+      result.runId,
+      0,
+      expect.stringContaining("provider cooling down"),
+      expect.objectContaining({
+        failed: 0,
+        stoppedReason: "provider_cooldown",
+      }),
+    );
+    expect(result).toMatchObject({
+      updated: 0,
+      failed: 0,
+      stoppedReason: "provider_cooldown",
     });
   });
 });

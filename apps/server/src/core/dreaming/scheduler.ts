@@ -47,11 +47,22 @@ async function runIfNotBusy(job: DreamingJob): Promise<void> {
   const startedAt = Date.now();
   try {
     const result = await runDreaming({ job });
+    const status = result.steps.every((step) => step.ok)
+      ? "completed"
+      : "partial";
     logger.info(
       {
         job,
+        status,
         durationMs: Date.now() - startedAt,
-        steps: result.steps.map((s) => ({ name: s.name, ok: s.ok })),
+        steps: result.steps.map((step) => ({
+          name: step.name,
+          ok: step.ok,
+          stoppedReason:
+            step.detail && typeof step.detail === "object"
+              ? (step.detail as { stoppedReason?: unknown }).stoppedReason
+              : undefined,
+        })),
       },
       "scheduled dreaming job completed",
     );

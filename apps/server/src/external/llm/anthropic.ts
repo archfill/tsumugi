@@ -1,11 +1,16 @@
 import process from "node:process";
 import Anthropic from "@anthropic-ai/sdk";
-import { ExternalError } from "../../lib/errors.js";
+import {
+  ExternalError,
+  ExternalResponseError,
+  ProviderUnavailableError,
+  isRetryableExternalError,
+} from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { llmRetriesTotal } from "../../lib/metrics.js";
 import { withRetry } from "../../lib/retry.js";
-import type { LlmClient, LlmRequest, LlmResponse } from "./types.js";
+import type { LlmClient, LlmRequest, LlmResponse, LlmTier } from "./types.js";
 
-class TransientLlmError extends ExternalError {}
 class PermanentLlmError extends ExternalError {}
 
 // Anthropic SDK は内部で retry 機構を持つが、tsumugi 全体で挙動を揃えるため
@@ -14,16 +19,29 @@ function classifyAnthropicError(err: unknown): ExternalError {
   if (err instanceof Anthropic.APIError) {
     const status = err.status;
     if (status === 429 || (status !== undefined && status >= 500)) {
-      return new TransientLlmError(`Anthropic API ${status}: ${err.message}`);
+      return new ProviderUnavailableError(
+        `Anthropic API ${status}: ${err.message}`,
+        status === 429 ? "rate_limit" : "server_error",
+      );
+    }
+    if (status === 401 || status === 403) {
+      return new ProviderUnavailableError(
+        `Anthropic API ${status}: ${err.message}`,
+        "auth",
+      );
     }
     // 4xx (auth, invalid request, content policy violation)
     return new PermanentLlmError(`Anthropic API ${status}: ${err.message}`);
   }
   if (err instanceof Anthropic.APIConnectionError) {
-    return new TransientLlmError(`Anthropic connection failed: ${err.message}`);
+    return new ProviderUnavailableError(
+      `Anthropic connection failed: ${err.message}`,
+      "network",
+    );
   }
-  return new TransientLlmError(
+  return new ProviderUnavailableError(
     `Anthropic call failed: ${err instanceof Error ? err.message : String(err)}`,
+    "network",
   );
 }
 
@@ -31,6 +49,7 @@ export function createAnthropicClient(opts: {
   apiKey: string;
   model: string;
   maxAttempts?: number;
+  tier?: LlmTier;
 }): LlmClient {
   const client = new Anthropic({ apiKey: opts.apiKey });
   const maxAttempts =
@@ -68,7 +87,7 @@ export function createAnthropicClient(opts: {
       const textBlock = res.content.find((c) => c.type === "text");
       if (!textBlock || textBlock.type !== "text") {
         // empty content with no clear permanent reason
-        throw new TransientLlmError(
+        throw new ExternalResponseError(
           `Anthropic response has no text block (stop_reason=${stopReason ?? "null"})`,
         );
       }
@@ -89,8 +108,11 @@ export function createAnthropicClient(opts: {
   async function complete(req: LlmRequest): Promise<LlmResponse> {
     return await withRetry(() => completeOnce(req), {
       maxAttempts,
-      shouldRetry: (err) => err instanceof TransientLlmError,
+      shouldRetry: isRetryableExternalError,
       onRetry: (err, attempt, delayMs) => {
+        const reason =
+          err instanceof ProviderUnavailableError ? err.reason : "response";
+        llmRetriesTotal.inc({ tier: opts.tier ?? "low", reason });
         logger.warn(
           {
             provider: "anthropic",

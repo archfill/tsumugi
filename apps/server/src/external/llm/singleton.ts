@@ -4,9 +4,17 @@ import {
   type LlmModelConfig,
   type LlmTierConfig,
 } from "../../lib/config.js";
-import { TsumugiError, ExternalError } from "../../lib/errors.js";
+import {
+  TsumugiError,
+  ExternalError,
+  ProviderUnavailableError,
+} from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
-import { llmCallDurationSeconds, llmCallsTotal } from "../../lib/metrics.js";
+import {
+  llmCallDurationSeconds,
+  llmCallsTotal,
+  llmCircuitEventsTotal,
+} from "../../lib/metrics.js";
 import { createAnthropicClient } from "./anthropic.js";
 import { createOpenAiCompatClient } from "./openai-compat.js";
 import type { LlmClient, LlmRequest, LlmResponse, LlmTier } from "./types.js";
@@ -16,10 +24,23 @@ const providerQueues = new Map<
   string,
   { tail: Promise<void>; depth: number }
 >();
+const providerCircuits = new Map<
+  string,
+  {
+    state: "open" | "half_open";
+    openUntil: number;
+    cooldownMs: number;
+  }
+>();
+
+const CIRCUIT_INITIAL_COOLDOWN_MS = 5 * 60 * 1000;
+const CIRCUIT_MAX_COOLDOWN_MS = 30 * 60 * 1000;
 
 function providerKey(cfg: LlmModelConfig): string {
   const endpoint =
-    cfg.provider === "anthropic" ? "api.anthropic.com" : cfg.baseUrl ?? "";
+    cfg.provider === "anthropic"
+      ? "api.anthropic.com"
+      : (cfg.baseUrl ?? "").replace(/\/+$/, "");
   const credential = createHash("sha256")
     .update(cfg.apiKey)
     .digest("hex")
@@ -29,6 +50,7 @@ function providerKey(cfg: LlmModelConfig): string {
 
 async function withProviderAdmission<T>(
   key: string,
+  provider: LlmModelConfig["provider"],
   run: () => Promise<T>,
 ): Promise<T> {
   let queue = providerQueues.get(key);
@@ -45,7 +67,55 @@ async function withProviderAdmission<T>(
   queue.depth++;
   await waitFor;
   try {
-    return await run();
+    const circuit = providerCircuits.get(key);
+    if (circuit?.state === "half_open") {
+      llmCircuitEventsTotal.inc({ provider, event: "rejected" });
+      throw new ProviderUnavailableError(
+        "LLM provider circuit half-open probe is already running",
+        "circuit_open",
+      );
+    }
+    if (circuit?.state === "open") {
+      if (Date.now() < circuit.openUntil) {
+        llmCircuitEventsTotal.inc({ provider, event: "rejected" });
+        throw new ProviderUnavailableError(
+          `LLM provider circuit is open until ${new Date(circuit.openUntil).toISOString()}`,
+          "circuit_open",
+        );
+      }
+      circuit.state = "half_open";
+      llmCircuitEventsTotal.inc({ provider, event: "half_open" });
+    }
+
+    try {
+      const result = await run();
+      if (providerCircuits.has(key)) {
+        providerCircuits.delete(key);
+        llmCircuitEventsTotal.inc({ provider, event: "recovered" });
+      }
+      return result;
+    } catch (err) {
+      if (err instanceof ProviderUnavailableError) {
+        const previous = providerCircuits.get(key);
+        const cooldownMs = Math.min(
+          previous
+            ? previous.cooldownMs * 2
+            : CIRCUIT_INITIAL_COOLDOWN_MS,
+          CIRCUIT_MAX_COOLDOWN_MS,
+        );
+        providerCircuits.set(key, {
+          state: "open",
+          openUntil: Date.now() + cooldownMs,
+          cooldownMs,
+        });
+        llmCircuitEventsTotal.inc({ provider, event: "opened" });
+      } else if (providerCircuits.has(key)) {
+        // A response-level failure still proves that the provider is reachable.
+        providerCircuits.delete(key);
+        llmCircuitEventsTotal.inc({ provider, event: "recovered" });
+      }
+      throw err;
+    }
   } finally {
     queue.depth--;
     release();
@@ -58,9 +128,12 @@ async function withProviderAdmission<T>(
 function serializeProvider(inner: LlmClient, cfg: LlmModelConfig): LlmClient {
   const key = providerKey(cfg);
   return {
-    complete: (req) => withProviderAdmission(key, () => inner.complete(req)),
+    complete: (req) =>
+      withProviderAdmission(key, cfg.provider, () => inner.complete(req)),
     completeJson: <T>(req: LlmRequest) =>
-      withProviderAdmission(key, () => inner.completeJson<T>(req)),
+      withProviderAdmission(key, cfg.provider, () =>
+        inner.completeJson<T>(req),
+      ),
   };
 }
 
@@ -75,7 +148,11 @@ function buildBasicClient(tier: LlmTier, cfg: LlmModelConfig): LlmClient {
   let raw: LlmClient;
   switch (cfg.provider) {
     case "anthropic":
-      raw = createAnthropicClient({ apiKey: cfg.apiKey, model: cfg.model });
+      raw = createAnthropicClient({
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        tier,
+      });
       break;
     case "openai-compat": {
       if (!cfg.baseUrl) {
@@ -87,6 +164,7 @@ function buildBasicClient(tier: LlmTier, cfg: LlmModelConfig): LlmClient {
         apiKey: cfg.apiKey,
         model: cfg.model,
         baseUrl: cfg.baseUrl,
+        tier,
       });
       break;
     }
@@ -169,6 +247,13 @@ function withFallback(
     try {
       return await run();
     } catch (fbErr) {
+      if (fbErr instanceof ProviderUnavailableError) {
+        throw new ProviderUnavailableError(
+          `LLM tier=${tier} primary and fallback providers are unavailable`,
+          fbErr.reason,
+          { primaryErr, fallbackErr: fbErr },
+        );
+      }
       // 両方失敗した場合は両方の情報を残して throw。
       throw new ExternalError(
         `LLM tier=${tier} primary and fallback both failed. primary: ${
@@ -218,7 +303,30 @@ export function getLlm(tier: LlmTier): LlmClient {
   return client;
 }
 
+function circuitAcceptsCall(cfg: LlmModelConfig): boolean {
+  const circuit = providerCircuits.get(providerKey(cfg));
+  return (
+    circuit === undefined ||
+    (circuit.state === "open" && Date.now() >= circuit.openUntil)
+  );
+}
+
+/** Check before claiming durable work so an open circuit consumes no attempt. */
+export function assertLlmAvailable(tier: LlmTier): void {
+  const config = loadConfig();
+  const tierCfg = tier === "low" ? config.llm.low : config.llm.mid;
+  const candidates = [tierCfg.primary, tierCfg.fallback].filter(
+    (cfg): cfg is LlmModelConfig => cfg !== undefined,
+  );
+  if (candidates.some(circuitAcceptsCall)) return;
+  throw new ProviderUnavailableError(
+    `LLM tier=${tier} has no provider outside cooldown`,
+    "circuit_open",
+  );
+}
+
 export function resetLlmCache(): void {
   cache.clear();
   providerQueues.clear();
+  providerCircuits.clear();
 }

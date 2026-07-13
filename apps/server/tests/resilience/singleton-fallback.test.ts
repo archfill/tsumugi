@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config, LlmModelConfig } from "../../src/lib/config.js";
 import type { LlmClient } from "../../src/external/llm/types.js";
+import { ProviderUnavailableError } from "../../src/lib/errors.js";
 
 const singletonState = vi.hoisted(() => ({
   primary: {
@@ -51,7 +52,7 @@ function configWithFallback(): Config {
       mid: {
         primary: {
           provider: "anthropic",
-          apiKey: "primary-mid-key",
+          apiKey: "primary-key",
           model: "primary-mid-model",
         },
       },
@@ -156,5 +157,58 @@ describe("LLM singleton fallback", () => {
     );
     expect(singletonState.primary.complete).toHaveBeenCalledTimes(1);
     expect(singletonState.fallback.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares an open provider circuit across tiers with the same credential", async () => {
+    singletonState.config!.llm.low.primary = {
+      provider: "openai-compat",
+      apiKey: "primary-key",
+      model: "primary-model",
+      baseUrl: "https://example.test/v1/",
+    };
+    singletonState.config!.llm.mid.primary = {
+      provider: "openai-compat",
+      apiKey: "primary-key",
+      model: "primary-mid-model",
+      baseUrl: "https://example.test/v1",
+    };
+    singletonState.primary.complete.mockRejectedValueOnce(
+      new ProviderUnavailableError("provider timeout", "timeout"),
+    );
+    singletonState.fallback.complete.mockResolvedValueOnce({
+      text: "fallback ok",
+    });
+
+    const { assertLlmAvailable, getLlm } = await loadSingleton();
+    await expect(getLlm("low").complete(request)).resolves.toMatchObject({
+      text: "fallback ok",
+    });
+    getLlm("mid");
+
+    expect(() => assertLlmAvailable("mid")).toThrow(/outside cooldown/);
+    expect(singletonState.primary.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows one half-open probe after cooldown and recovers on success", async () => {
+    singletonState.config!.llm.low.fallback = undefined;
+    const now = new Date("2026-07-13T00:00:00.000Z").getTime();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    singletonState.primary.complete
+      .mockRejectedValueOnce(
+        new ProviderUnavailableError("provider timeout", "timeout"),
+      )
+      .mockResolvedValueOnce({ text: "recovered" });
+
+    const { assertLlmAvailable, getLlm } = await loadSingleton();
+    const client = getLlm("low");
+
+    await expect(client.complete(request)).rejects.toThrow("provider timeout");
+    await expect(client.complete(request)).rejects.toThrow(/circuit is open/);
+    expect(singletonState.primary.complete).toHaveBeenCalledTimes(1);
+
+    vi.mocked(Date.now).mockReturnValue(now + 5 * 60 * 1000);
+    await expect(client.complete(request)).resolves.toEqual({ text: "recovered" });
+    expect(() => assertLlmAvailable("low")).not.toThrow();
+    expect(singletonState.primary.complete).toHaveBeenCalledTimes(2);
   });
 });

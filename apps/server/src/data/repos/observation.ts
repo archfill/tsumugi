@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { observations } from "../schema.js";
 
@@ -9,6 +9,8 @@ export interface ObservationFactsPatch {
 
 export type ObservationRow = typeof observations.$inferSelect;
 export type NewObservationRow = typeof observations.$inferInsert;
+
+export const OBSERVATION_PREPARATION_QUARANTINE_THRESHOLD = 5;
 
 export const observationRepo = {
   async insert(row: NewObservationRow): Promise<void> {
@@ -48,6 +50,7 @@ export const observationRepo = {
         and(
           isNull(observations.promoted_at),
           eq(observations.promotion_state, "ready"),
+          lte(observations.promotion_next_attempt_at, new Date()),
         ),
       )
       .orderBy(observations.created_at)
@@ -56,14 +59,59 @@ export const observationRepo = {
   async markPromoted(id: string, promotedAt = new Date()): Promise<void> {
     await db
       .update(observations)
-      .set({ promoted_at: promotedAt, promotion_state: "completed" })
+      .set({
+        promoted_at: promotedAt,
+        promotion_state: "completed",
+        promotion_failure_count: 0,
+        promotion_next_attempt_at: promotedAt,
+        promotion_last_failure_at: null,
+        promotion_last_error: null,
+      })
       .where(eq(observations.id, id));
   },
   async markSkipped(id: string, promotedAt = new Date()): Promise<void> {
     await db
       .update(observations)
-      .set({ promoted_at: promotedAt, promotion_state: "skipped" })
+      .set({
+        promoted_at: promotedAt,
+        promotion_state: "skipped",
+        promotion_last_failure_at: null,
+        promotion_last_error: null,
+      })
       .where(eq(observations.id, id));
+  },
+  async recordPromotionFailure(
+    row: ObservationRow,
+    error: string,
+  ): Promise<{ quarantined: boolean; updated: boolean }> {
+    const failureCount = row.promotion_failure_count + 1;
+    const quarantined =
+      failureCount >= OBSERVATION_PREPARATION_QUARANTINE_THRESHOLD;
+    const delayMs = Math.min(
+      24 * 60 * 60 * 1000,
+      60_000 * 2 ** Math.max(0, failureCount - 1),
+    );
+    const updated = await db
+      .update(observations)
+      .set({
+        promotion_state: quarantined ? "quarantined" : "ready",
+        promotion_failure_count: failureCount,
+        promotion_next_attempt_at: new Date(Date.now() + delayMs),
+        promotion_last_failure_at: new Date(),
+        promotion_last_error: error,
+      })
+      .where(
+        and(
+          eq(observations.id, row.id),
+          eq(observations.promotion_state, "ready"),
+          eq(
+            observations.promotion_failure_count,
+            row.promotion_failure_count,
+          ),
+        ),
+      )
+      .returning({ id: observations.id });
+    return { quarantined, updated: updated.length === 1 };
   },
   async listForSession(
     sessionId: string,

@@ -221,6 +221,7 @@ export const AdminOperationIssue = z.object({
   source: z.string().nullable(),
   occurred_at: z.string(),
   attempt_count: z.number().int().nonnegative(),
+  failure_count: z.number().int().nonnegative(),
   summary: z.string().nullable(),
   last_error: z.string().nullable(),
 });

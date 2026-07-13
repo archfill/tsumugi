@@ -15,9 +15,15 @@
  */
 
 import process from "node:process";
-import type { LlmClient, LlmRequest, LlmResponse } from "./types.js";
-import { ExternalError } from "../../lib/errors.js";
+import type { LlmClient, LlmRequest, LlmResponse, LlmTier } from "./types.js";
+import {
+  ExternalError,
+  ExternalResponseError,
+  ProviderUnavailableError,
+  isRetryableExternalError,
+} from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { llmRetriesTotal } from "../../lib/metrics.js";
 import { withRetry, withTimeout } from "../../lib/retry.js";
 
 interface ChatCompletionResponse {
@@ -42,6 +48,8 @@ export interface OpenAiCompatOptions {
   maxAttempts?: number;
   /** per-attempt timeout ms (default 30000, env LLM_TIMEOUT_MS で上書き可) */
   timeoutMs?: number;
+  /** Metrics label supplied by the tier singleton. */
+  tier?: LlmTier;
 }
 
 // permanent failure reasons returned in finish_reason
@@ -50,7 +58,6 @@ const PERMANENT_FINISH_REASONS = new Set([
   "length", // max_tokens reached without producing content
 ]);
 
-class TransientLlmError extends ExternalError {}
 class PermanentLlmError extends ExternalError {}
 
 export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
@@ -93,8 +100,10 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
       `OpenAI-compat fetch timed out after ${timeoutMs}ms (${baseUrl})`,
     ).catch((err) => {
       // network failure / timeout -> transient
-      throw new TransientLlmError(
+      const message = err instanceof Error ? err.message : String(err);
+      throw new ProviderUnavailableError(
         `OpenAI-compat fetch failed (${baseUrl}): ${err instanceof Error ? err.message : String(err)}`,
+        message.includes("timed out") ? "timeout" : "network",
         err,
       );
     });
@@ -104,7 +113,13 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
       const msg = `OpenAI-compat API ${res.status} ${res.statusText}: ${text.slice(0, 300)}`;
       // 4xx (auth, invalid request) = permanent; 5xx / 429 = transient
       if (res.status === 429 || res.status >= 500) {
-        throw new TransientLlmError(msg);
+        throw new ProviderUnavailableError(
+          msg,
+          res.status === 429 ? "rate_limit" : "server_error",
+        );
+      }
+      if (res.status === 401 || res.status === 403) {
+        throw new ProviderUnavailableError(msg, "auth");
       }
       throw new PermanentLlmError(msg);
     }
@@ -114,7 +129,7 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
       json = (await res.json()) as ChatCompletionResponse;
     } catch (err) {
       // body parse failure = transient (proxy/CDN garbling, partial response)
-      throw new TransientLlmError(
+      throw new ExternalResponseError(
         "OpenAI-compat response JSON parse failed",
         err,
       );
@@ -132,7 +147,7 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
         );
       }
       // empty content with no clear reason -> transient (provider hiccup)
-      throw new TransientLlmError(
+      throw new ExternalResponseError(
         `OpenAI-compat empty content (transient, finish_reason=${finishReason ?? "null"})`,
       );
     }
@@ -149,8 +164,11 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
   async function complete(req: LlmRequest): Promise<LlmResponse> {
     return await withRetry(() => completeOnce(req), {
       maxAttempts,
-      shouldRetry: (err) => err instanceof TransientLlmError,
+      shouldRetry: isRetryableExternalError,
       onRetry: (err, attempt, delayMs) => {
+        const reason =
+          err instanceof ProviderUnavailableError ? err.reason : "response";
+        llmRetriesTotal.inc({ tier: opts.tier ?? "low", reason });
         logger.warn(
           {
             provider: "openai-compat",

@@ -255,13 +255,19 @@ Layer 3 memory
 
 `capture_promotion_windows` と `observation_promotion_facts` を durable work queue とする。
 両段とも `pending / processing / committing / completed / deferred / quarantined` を永続化し、claim lease、
-retry、5 回失敗時の quarantine、run/failure budget を持つ。process crash 後も期限切れ lease を
-再 claim できる。
+retry、5 回の item 固有失敗時の quarantine、run/failure budget を持つ。`attempt_count` は
+lease / fencing、`failure_count` は item 固有失敗と backoff に使い、provider-wide failure は
+後者に加算しない。process crash 後も期限切れ lease を再 claim できる。
 
 - capture → observation: window、生成 observation、fact work items、capture↔observation link、
   capture/window 完了状態を transaction で確定する
 - observation → memory: **fact ごと**に AUDN を適用し、memory mutation、provenance link、
   fact 完了状態を transaction で確定する。全 fact 完了後に observation を完了扱いにする
+- observation promotion は既存 fact を先に drain し、retry 待ち fact があれば新規 observation を
+  seed しない。1 observation を seed した後は、その fact 処理へ戻ってから次へ進む
+- fact 抽出前の observation 準備失敗は observation 自体に failure count / next attempt / last error を
+  永続化し、5 回の item 固有失敗で quarantine する
+- capture promotion は downstream fact が残る間、新規 window の作成・claim を行わない
 
 これにより、途中失敗後の再実行で同じ範囲を最初から曖昧にやり直すのではなく、未完了の
 window / fact から再開できる。
@@ -269,6 +275,8 @@ window / fact から再開できる。
 capture と observation の schedule は 5 分ずらすだけでなく、LLM client の入口で同じ
 provider endpoint + credential に対する同時実行を 1 に制限する。異なる tier / job が重なっても
 provider への並列負荷を増やさず、既存の retry / fallback は admission 後の client 内で維持する。
+同じ共有単位には 5〜30 分の circuit breaker を設け、cooldown 後は half-open の単一 probe で
+復旧確認する。durable work は circuit preflight 後に claim する。
 この admission queue は単一 server process 内の制御であり、複数 replica で運用する場合は
 provider 単位の distributed admission を別途追加する。
 
@@ -411,7 +419,7 @@ scope に合致しないため scope 外。将来 capture / recall / continuity 
 | 2     | capture、window、fact-level promotion の repository (state / lease / retry / quarantine / transaction)                  | 実装済み                                  |
 | 3     | Claude Code / Codex hook: deterministic capture、Stop turn checkpoint、`turn_id` / continuity payload                    | 実装済み                                  |
 | 4     | 3 completed turns / 12,000 chars window による scheduled capture→observation と fact-level observation→memory promotion | 実装済み                                  |
-| 5     | SessionStart continuity bridge、scheduler 分離、provider admission、retention sweep job                                 | 実装済み                                  |
+| 5     | SessionStart continuity bridge、scheduler 分離、provider admission / circuit / backpressure、retention sweep job          | 実装済み                                  |
 | 6     | bench / smoke / 本番観察 (1-2 week): 昇格率・品質・call 数・retry/quarantine・continuity・DB volume                      | baseline 取得済み、改訂経路の本番評価待ち |
 
 ADR Status は Phase 6 の本番 evidence を確認するまで `Proposed` のままとする。Phase 1-5 の

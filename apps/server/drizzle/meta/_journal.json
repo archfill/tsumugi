@@ -64,6 +64,20 @@
       "when": 1783938329392,
       "tag": "0008_unusual_blizzard",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783948050759,
+      "tag": "0009_open_the_hand",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783949379064,
+      "tag": "0010_lazy_mister_fear",
+      "breakpoints": true
     }
   ]
 }

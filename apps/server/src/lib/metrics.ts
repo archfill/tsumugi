@@ -69,6 +69,13 @@ export const llmRetriesTotal = new Counter({
   registers: [registry],
 });
 
+export const llmCircuitEventsTotal = new Counter({
+  name: "tsumugi_llm_circuit_events_total",
+  help: "Total number of provider circuit breaker state transitions.",
+  labelNames: ["provider", "event"] as const,
+  registers: [registry],
+});
+
 // ---------------------------------------------------------------------------
 // Dreaming
 // ---------------------------------------------------------------------------

@@ -1,0 +1,2 @@
+ALTER TABLE "capture_promotion_windows" ADD COLUMN "failure_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "observation_promotion_facts" ADD COLUMN "failure_count" integer DEFAULT 0 NOT NULL;

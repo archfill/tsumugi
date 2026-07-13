@@ -12,6 +12,7 @@
 
 import { captureRepo } from "../../data/repos/capture.js";
 import { capturePromotionWindowRepo } from "../../data/repos/capture-promotion-window.js";
+import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { promoteCaptures } from "../capture/promote.js";
 import { promoteObservations } from "../observation/promote.js";
 import { synthesizeMemories } from "./synthesize.js";
@@ -19,6 +20,7 @@ import { timeAwareMemoryUpdate } from "./time-update.js";
 import { detectDecisionContradictions } from "./decision-contradiction.js";
 import { reflectOnSession } from "./reflection.js";
 import { ValidationError } from "../../lib/errors.js";
+import { newId } from "../../lib/id.js";
 import {
   dreamingRunDurationSeconds,
   dreamingRunsTotal,
@@ -75,6 +77,13 @@ export interface DreamingRunOptions {
   timeUpdateStaleRunMs?: number;
 }
 
+function promotionNeedsAttention(result: {
+  errors: string[];
+  stoppedReason: string;
+}): boolean {
+  return result.errors.length > 0 || result.stoppedReason === "waiting_for_retry";
+}
+
 // ---------------------------------------------------------------------------
 // Step runners
 // ---------------------------------------------------------------------------
@@ -82,18 +91,41 @@ export interface DreamingRunOptions {
 async function stepPromoteObservations(
   maxObservations: number,
 ): Promise<DreamingStepResult> {
+  const runId = newId("drun");
   try {
+    await dreamingRunRepo.insert({
+      id: runId,
+      job_kind: "promote-observations",
+      status: "pending",
+      input_count: maxObservations,
+      output_count: 0,
+    });
+    await dreamingRunRepo.markRunning(runId);
     const result = await promoteObservations({
       maxObservations,
       maxFacts: maxObservations,
     });
+    const needsAttention = promotionNeedsAttention(result);
+    if (needsAttention) {
+      await dreamingRunRepo.markPartial(
+        runId,
+        result.factsCompleted,
+        result.errors.join("\n") || `promotion stopped: ${result.stoppedReason}`,
+        { ...result },
+      );
+    } else {
+      await dreamingRunRepo.markCompleted(runId, result.factsCompleted, {
+        ...result,
+      });
+    }
     return {
       name: "promote-observations",
-      ok: result.errors.length === 0,
+      ok: !needsAttention,
       detail: result,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await dreamingRunRepo.markFailed(runId, msg);
     return {
       name: "promote-observations",
       ok: false,
@@ -105,15 +137,40 @@ async function stepPromoteObservations(
 async function stepPromoteCaptures(
   maxCaptures: number,
 ): Promise<DreamingStepResult> {
+  const runId = newId("drun");
   try {
+    await dreamingRunRepo.insert({
+      id: runId,
+      job_kind: "promote-captures",
+      status: "pending",
+      input_count: maxCaptures,
+      output_count: 0,
+    });
+    await dreamingRunRepo.markRunning(runId);
     const result = await promoteCaptures(maxCaptures);
+    const needsAttention = promotionNeedsAttention(result);
+    if (needsAttention) {
+      await dreamingRunRepo.markPartial(
+        runId,
+        result.promoted + result.skipped,
+        result.errors.join("\n") || `promotion stopped: ${result.stoppedReason}`,
+        { ...result },
+      );
+    } else {
+      await dreamingRunRepo.markCompleted(
+        runId,
+        result.promoted + result.skipped,
+        { ...result },
+      );
+    }
     return {
       name: "promote-captures",
-      ok: result.errors.length === 0,
+      ok: !needsAttention,
       detail: result,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await dreamingRunRepo.markFailed(runId, msg);
     return {
       name: "promote-captures",
       ok: false,
@@ -152,7 +209,7 @@ async function stepSynthesize(
     const result = await synthesizeMemories({ maxMemories });
     return {
       name: "synthesize",
-      ok: true,
+      ok: result.errors.length === 0,
       detail: result,
     };
   } catch (err) {
@@ -186,7 +243,7 @@ async function stepTimeUpdate(
     });
     return {
       name: "time-update",
-      ok: true,
+      ok: result.errors.length === 0,
       detail: result,
     };
   } catch (err) {

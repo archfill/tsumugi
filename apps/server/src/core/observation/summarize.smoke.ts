@@ -34,6 +34,10 @@ function fakeObs(overrides: Partial<ObservationRow>): ObservationRow {
     created_at: new Date(),
     promoted_at: null,
     promotion_state: "ready",
+    promotion_failure_count: 0,
+    promotion_next_attempt_at: new Date(),
+    promotion_last_failure_at: null,
+    promotion_last_error: null,
     // generated column on the DB side; mirror that here for type completeness
     search_text: overrides.content ?? "",
     ...overrides,

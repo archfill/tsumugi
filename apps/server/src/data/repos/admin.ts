@@ -126,6 +126,14 @@ function memoryScope(scope: AdminScope): SQL[] {
   return conditions;
 }
 
+function dreamingRunAttentionScope(scope: AdminScope): SQL[] {
+  if (scope.project || scope.source) return [sql`false`];
+  const conditions: SQL[] = [];
+  if (scope.from) conditions.push(sql`started_at >= ${scope.from}`);
+  if (scope.to) conditions.push(sql`started_at <= ${scope.to}`);
+  return conditions;
+}
+
 async function captureSummary(scope: AdminScope): Promise<AdminLayerSummary> {
   const filters = captureScope(scope);
   const [summaryResult, statesResult] = await Promise.all([
@@ -163,7 +171,13 @@ async function observationSummary(
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE o.created_at >= now() - interval '24 hours')::int AS created_24h,
-        MIN(o.created_at) FILTER (WHERE o.promotion_state IN ('ready', 'processing')) AS oldest_actionable_at
+        MIN(o.created_at) FILTER (
+          WHERE o.promotion_state = 'processing'
+             OR (
+               o.promotion_state = 'ready'
+               AND o.promotion_next_attempt_at <= now()
+             )
+        ) AS oldest_actionable_at
       FROM observations o
       ${where(filters)}
     `),
@@ -297,7 +311,13 @@ async function countAttention(scope: AdminScope): Promise<number> {
       SELECT COUNT(*)::int AS count FROM observations o
       ${where([
         ...observationScope(scope),
-        sql`o.promotion_state IN ('quarantined', 'legacy_partial')`,
+        sql`(
+          o.promotion_state IN ('quarantined', 'legacy_partial')
+          OR (
+            o.promotion_state = 'ready'
+            AND o.promotion_failure_count > 0
+          )
+        )`,
       ])}
     `),
     db.execute<{ count: number | string }>(sql`
@@ -316,8 +336,13 @@ async function countAttention(scope: AdminScope): Promise<number> {
     `),
     db.execute<{ count: number | string }>(sql`
       SELECT COUNT(*)::int AS count FROM dreaming_runs
-      WHERE status = 'failed'
-         OR (status = 'running' AND started_at < now() - interval '2 hours')
+      ${where([
+        ...dreamingRunAttentionScope(scope),
+        sql`(
+          status IN ('failed', 'partial')
+          OR (status = 'running' AND started_at < now() - interval '2 hours')
+        )`,
+      ])}
     `),
   ]);
   return [windows, facts, observations, memories, runs].reduce(
@@ -372,6 +397,7 @@ async function getFilterOptions(): Promise<AdminFilterOptions> {
         "stale",
         "outdated",
         "failed",
+        "partial",
         "legacy_partial",
       ],
     },
@@ -696,6 +722,7 @@ async function getPipelineTrace(
             'raw_chars', w.raw_chars,
             'fallback', w.fallback,
             'attempt_count', w.attempt_count,
+            'failure_count', w.failure_count,
             'next_attempt_at', w.next_attempt_at,
             'lease_expires_at', w.lease_expires_at,
             'last_error', w.last_error,
@@ -750,6 +777,10 @@ async function getPipelineTrace(
             'session_id', o.session_id,
             'project_tag', o.project_tag,
             'facts', o.facts,
+            'promotion_failure_count', o.promotion_failure_count,
+            'promotion_next_attempt_at', o.promotion_next_attempt_at,
+            'promotion_last_failure_at', o.promotion_last_failure_at,
+            'promotion_last_error', o.promotion_last_error,
             'promoted_at', o.promoted_at
           ) AS metadata
         FROM observations o
@@ -765,6 +796,7 @@ async function getPipelineTrace(
           jsonb_build_object(
             'ordinal', f.ordinal,
             'attempt_count', f.attempt_count,
+            'failure_count', f.failure_count,
             'next_attempt_at', f.next_attempt_at,
             'lease_expires_at', f.lease_expires_at,
             'last_error', f.last_error,
@@ -856,6 +888,7 @@ interface IssueRow {
   source: string | null;
   occurred_at: Date | string;
   attempt_count: number | string;
+  failure_count: number | string;
   summary: string | null;
   last_error: string | null;
 }
@@ -865,6 +898,7 @@ function mapIssue(row: IssueRow): AdminOperationIssue {
     ...row,
     occurred_at: iso(row.occurred_at) ?? new Date(0).toISOString(),
     attempt_count: toNumber(row.attempt_count),
+    failure_count: toNumber(row.failure_count),
   };
 }
 
@@ -907,6 +941,7 @@ async function listOperationIssues(scope: AdminPageScope): Promise<{
         w.source,
         w.updated_at AS occurred_at,
         w.attempt_count,
+        w.failure_count,
         CONCAT(w.capture_count, ' captures / ', w.completed_turns, ' completed turns') AS summary,
         w.last_error
       FROM capture_promotion_windows w
@@ -926,6 +961,7 @@ async function listOperationIssues(scope: AdminPageScope): Promise<{
         o.source,
         f.updated_at AS occurred_at,
         f.attempt_count,
+        f.failure_count,
         LEFT(f.fact, 280) AS summary,
         f.last_error
       FROM observation_promotion_facts f
@@ -938,15 +974,21 @@ async function listOperationIssues(scope: AdminPageScope): Promise<{
       SELECT
         o.id,
         'observation'::text AS kind,
-        o.promotion_state AS state,
+        CASE
+          WHEN o.promotion_state = 'ready' AND o.promotion_failure_count > 0
+            THEN 'deferred'
+          ELSE o.promotion_state
+        END AS state,
         o.project_tag,
         o.source,
-        o.created_at AS occurred_at,
+        COALESCE(o.promotion_last_failure_at, o.created_at) AS occurred_at,
         0::int AS attempt_count,
+        o.promotion_failure_count AS failure_count,
         LEFT(o.content, 280) AS summary,
-        NULL::text AS last_error
+        o.promotion_last_error AS last_error
       FROM observations o
       WHERE o.promotion_state IN ('quarantined', 'legacy_partial')
+         OR (o.promotion_state = 'ready' AND o.promotion_failure_count > 0)
 
       UNION ALL
 
@@ -961,6 +1003,7 @@ async function listOperationIssues(scope: AdminPageScope): Promise<{
         provenance.source,
         COALESCE(m.outdated_at, m.llm_quarantined_at, m.updated_at) AS occurred_at,
         m.llm_failure_count AS attempt_count,
+        m.llm_failure_count AS failure_count,
         LEFT(m.narrative, 280) AS summary,
         m.outdated_reason AS last_error
       FROM memories m
@@ -990,10 +1033,11 @@ async function listOperationIssues(scope: AdminPageScope): Promise<{
         NULL::text AS source,
         r.started_at AS occurred_at,
         0::int AS attempt_count,
+        0::int AS failure_count,
         r.job_kind AS summary,
         r.error_message AS last_error
       FROM dreaming_runs r
-      WHERE r.status = 'failed'
+      WHERE r.status IN ('failed', 'partial')
          OR (r.status = 'running' AND r.started_at < now() - interval '2 hours')
     )
     SELECT * FROM issues

@@ -100,38 +100,62 @@ export type NewCapture = typeof captures.$inferInsert;
 // ---------------------------------------------------------------------------
 // Layer 2: observations
 // ---------------------------------------------------------------------------
-export const observations = pgTable("observations", {
-  id: text("id").primaryKey(),
-  content: text("content").notNull(),
-  /** ObservationType: discovery | progress | blocker | decision | reflection | other */
-  type: text("type").notNull(),
-  /** ClientSource: claude-code | codex | yui | other */
-  source: text("source").notNull(),
-  /** agent = direct save_observation; capture = promoted from Layer 1 */
-  source_layer: text("source_layer").notNull().default("agent"),
-  session_id: text("session_id"),
-  project_tag: text("project_tag"),
-  /** string[] */
-  facts: jsonb("facts").$type<string[]>(),
-  /** Record<string, unknown> */
-  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
-  /** BGE-M3 embedding dim = 1024 */
-  embedding: vector("embedding", { dimensions: 1024 }),
-  created_at: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  /** NULL = not yet promoted to Layer 2 by the dreaming worker */
-  promoted_at: timestamp("promoted_at", { withTimezone: true }),
-  /** ready | processing | completed | skipped | quarantined | legacy_partial */
-  promotion_state: text("promotion_state").notNull().default("ready"),
-  /**
-   * pg_bigm 検索用の生成列。content と facts を結合し、コードシンボル等が
-   * facts[] にしかない場合でも bigram マッチでヒットさせる。
-   */
-  search_text: text("search_text")
-    .notNull()
-    .generatedAlwaysAs(sql`("content" || ' ' || coalesce("facts"::text, ''))`),
-});
+export const observations = pgTable(
+  "observations",
+  {
+    id: text("id").primaryKey(),
+    content: text("content").notNull(),
+    /** ObservationType: discovery | progress | blocker | decision | reflection | other */
+    type: text("type").notNull(),
+    /** ClientSource: claude-code | codex | yui | other */
+    source: text("source").notNull(),
+    /** agent = direct save_observation; capture = promoted from Layer 1 */
+    source_layer: text("source_layer").notNull().default("agent"),
+    session_id: text("session_id"),
+    project_tag: text("project_tag"),
+    /** string[] */
+    facts: jsonb("facts").$type<string[]>(),
+    /** Record<string, unknown> */
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    /** BGE-M3 embedding dim = 1024 */
+    embedding: vector("embedding", { dimensions: 1024 }),
+    created_at: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** NULL = not yet promoted to Layer 2 by the dreaming worker */
+    promoted_at: timestamp("promoted_at", { withTimezone: true }),
+    /** ready | processing | completed | skipped | quarantined | legacy_partial */
+    promotion_state: text("promotion_state").notNull().default("ready"),
+    promotion_failure_count: integer("promotion_failure_count")
+      .notNull()
+      .default(0),
+    promotion_next_attempt_at: timestamp("promotion_next_attempt_at", {
+      withTimezone: true,
+    })
+      .notNull()
+      .defaultNow(),
+    promotion_last_failure_at: timestamp("promotion_last_failure_at", {
+      withTimezone: true,
+    }),
+    promotion_last_error: text("promotion_last_error"),
+    /**
+     * pg_bigm 検索用の生成列。content と facts を結合し、コードシンボル等が
+     * facts[] にしかない場合でも bigram マッチでヒットさせる。
+     */
+    search_text: text("search_text")
+      .notNull()
+      .generatedAlwaysAs(
+        sql`("content" || ' ' || coalesce("facts"::text, ''))`,
+      ),
+  },
+  (table) => [
+    index("idx_observations_promotion_eligible").on(
+      table.promotion_state,
+      table.promotion_next_attempt_at,
+      table.created_at,
+    ),
+  ],
+);
 
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;
@@ -146,7 +170,6 @@ export const capturePromotionWindows = pgTable(
     source: text("source").notNull(),
     session_id: text("session_id").notNull(),
     project_tag: text("project_tag"),
-    /** pending | processing | completed | skipped | deferred | quarantined */
     /** pending | processing | committing | completed | skipped | deferred | quarantined | expired */
     status: text("status").notNull().default("pending"),
     cutoff_at: timestamp("cutoff_at", { withTimezone: true }).notNull(),
@@ -157,6 +180,8 @@ export const capturePromotionWindows = pgTable(
     /** Cleared after terminal state or the Layer 1 retention horizon. */
     input_content: text("input_content"),
     attempt_count: integer("attempt_count").notNull().default(0),
+    /** Item-scoped failures only; provider outages do not advance quarantine. */
+    failure_count: integer("failure_count").notNull().default(0),
     next_attempt_at: timestamp("next_attempt_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -219,6 +244,8 @@ export const observationPromotionFacts = pgTable(
     /** pending | processing | committing | completed | deferred | quarantined */
     status: text("status").notNull().default("pending"),
     attempt_count: integer("attempt_count").notNull().default(0),
+    /** Item-scoped failures only; provider outages do not advance quarantine. */
+    failure_count: integer("failure_count").notNull().default(0),
     next_attempt_at: timestamp("next_attempt_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -339,9 +366,9 @@ export type NewLink = typeof links.$inferInsert;
 // ---------------------------------------------------------------------------
 export const dreamingRuns = pgTable("dreaming_runs", {
   id: text("id").primaryKey(),
-  /** summarize | audn | synthesize | time-update | decision-contradiction | reflection | runner */
+  /** promote-* | synthesize | time-update | decision-contradiction | reflection */
   job_kind: text("job_kind").notNull(),
-  /** pending | running | completed | failed */
+  /** pending | running | completed | partial | failed */
   status: text("status").notNull().default("pending"),
   started_at: timestamp("started_at", { withTimezone: true })
     .notNull()

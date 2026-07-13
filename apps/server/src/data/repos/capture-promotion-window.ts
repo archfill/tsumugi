@@ -72,6 +72,15 @@ export const capturePromotionWindowRepo = {
       .limit(limit);
   },
 
+  async countOutstanding(): Promise<number> {
+    const result = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count
+      FROM capture_promotion_windows
+      WHERE status IN ('pending', 'deferred', 'processing', 'committing')
+    `);
+    return Number(result.rows[0]?.count ?? 0);
+  },
+
   async claim(
     id: string,
     leaseMs = 10 * 60 * 1000,
@@ -212,11 +221,14 @@ export const capturePromotionWindowRepo = {
   async defer(
     row: CapturePromotionWindowRow,
     error: string,
+    options?: { countsTowardQuarantine?: boolean },
   ): Promise<{ quarantined: boolean; updated: boolean }> {
-    const quarantined = row.attempt_count >= WINDOW_QUARANTINE_THRESHOLD;
+    const failureCount =
+      row.failure_count + (options?.countsTowardQuarantine === false ? 0 : 1);
+    const quarantined = failureCount >= WINDOW_QUARANTINE_THRESHOLD;
     const delayMs = Math.min(
       24 * 60 * 60 * 1000,
-      60_000 * 2 ** Math.max(0, row.attempt_count - 1),
+      60_000 * 2 ** Math.max(0, failureCount - 1),
     );
     const updated = await db
       .update(capturePromotionWindows)
@@ -226,6 +238,7 @@ export const capturePromotionWindowRepo = {
         next_attempt_at: new Date(Date.now() + delayMs),
         lease_expires_at: null,
         last_error: error,
+        failure_count: failureCount,
         updated_at: new Date(),
       })
       .where(

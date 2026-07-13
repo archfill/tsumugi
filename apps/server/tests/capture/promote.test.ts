@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ProviderUnavailableError } from "../../src/lib/errors.js";
 
 const captureRepoMock = vi.hoisted(() => ({
   listReady: vi.fn(),
@@ -9,6 +10,7 @@ const captureRepoMock = vi.hoisted(() => ({
 const capturePromotionWindowRepoMock = vi.hoisted(() => ({
   create: vi.fn(),
   listEligible: vi.fn(),
+  countOutstanding: vi.fn(),
   claim: vi.fn(),
   complete: vi.fn(),
   skip: vi.fn(),
@@ -21,6 +23,10 @@ const embedderMock = vi.hoisted(() => ({
 
 const summarizeObservationMock = vi.hoisted(() => vi.fn());
 const withPgAdvisoryLockMock = vi.hoisted(() => vi.fn());
+const observationPromotionFactRepoMock = vi.hoisted(() => ({
+  countOutstanding: vi.fn(),
+}));
+const assertLlmAvailableMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../src/data/repos/capture.js", () => ({
   captureRepo: captureRepoMock,
@@ -30,8 +36,16 @@ vi.mock("../../src/data/repos/capture-promotion-window.js", () => ({
   capturePromotionWindowRepo: capturePromotionWindowRepoMock,
 }));
 
+vi.mock("../../src/data/repos/observation-promotion-fact.js", () => ({
+  observationPromotionFactRepo: observationPromotionFactRepoMock,
+}));
+
 vi.mock("../../src/external/embedding/singleton.js", () => ({
   getEmbedder: () => embedderMock,
+}));
+
+vi.mock("../../src/external/llm/singleton.js", () => ({
+  assertLlmAvailable: assertLlmAvailableMock,
 }));
 
 vi.mock("../../src/core/observation/summarize.js", () => ({
@@ -90,6 +104,7 @@ function promotionWindow(overrides: Record<string, unknown> = {}) {
     fallback: false,
     input_content: "[User]\nImplement durable capture promotion.",
     attempt_count: 0,
+    failure_count: 0,
     next_attempt_at: new Date("2026-07-13T00:00:02Z"),
     lease_expires_at: null,
     last_error: null,
@@ -122,6 +137,8 @@ describe("promoteCaptures", () => {
     captureRepoMock.deletePromoted.mockResolvedValue(0);
     capturePromotionWindowRepoMock.create.mockResolvedValue(undefined);
     capturePromotionWindowRepoMock.listEligible.mockResolvedValue([]);
+    capturePromotionWindowRepoMock.countOutstanding.mockResolvedValue(0);
+    observationPromotionFactRepoMock.countOutstanding.mockResolvedValue(0);
     capturePromotionWindowRepoMock.claim.mockResolvedValue(null);
     capturePromotionWindowRepoMock.complete.mockResolvedValue(undefined);
     capturePromotionWindowRepoMock.skip.mockResolvedValue(undefined);
@@ -171,9 +188,9 @@ describe("promoteCaptures", () => {
         createdWindow = promotionWindow(row);
       },
     );
-    capturePromotionWindowRepoMock.listEligible.mockImplementationOnce(
-      async () => [createdWindow],
-    );
+    capturePromotionWindowRepoMock.listEligible
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(async () => [createdWindow]);
     let claimed = claimedWindow();
     capturePromotionWindowRepoMock.claim.mockImplementationOnce(async () => {
       claimed = claimedWindow(createdWindow);
@@ -276,6 +293,7 @@ describe("promoteCaptures", () => {
     expect(capturePromotionWindowRepoMock.defer).toHaveBeenCalledWith(
       claimed,
       "LLM unavailable",
+      { countsTowardQuarantine: true },
     );
     expect(capturePromotionWindowRepoMock.complete).not.toHaveBeenCalled();
     expect(capturePromotionWindowRepoMock.skip).not.toHaveBeenCalled();
@@ -286,6 +304,44 @@ describe("promoteCaptures", () => {
       deferred: 1,
       quarantined: 0,
       errors: ["window(win_1): LLM unavailable"],
+    });
+  });
+
+  it("下流 fact backlog がある間は window を作成・claimしない", async () => {
+    observationPromotionFactRepoMock.countOutstanding.mockResolvedValueOnce(4);
+
+    const result = await promoteCaptures();
+
+    expect(capturePromotionWindowRepoMock.create).not.toHaveBeenCalled();
+    expect(capturePromotionWindowRepoMock.claim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      stoppedReason: "downstream_backpressure",
+      windowsCreated: 0,
+      windowsSelected: 0,
+    });
+  });
+
+  it("provider 障害は window quarantine failure に数えない", async () => {
+    const window = promotionWindow();
+    const claimed = claimedWindow(window);
+    capturePromotionWindowRepoMock.listEligible.mockResolvedValueOnce([window]);
+    capturePromotionWindowRepoMock.claim.mockResolvedValueOnce(claimed);
+    captureRepoMock.listForWindow.mockResolvedValueOnce([capture("cap_stop")]);
+    summarizeObservationMock.mockRejectedValueOnce(
+      new ProviderUnavailableError("provider timeout", "timeout"),
+    );
+
+    const result = await promoteCaptures();
+
+    expect(capturePromotionWindowRepoMock.defer).toHaveBeenCalledWith(
+      claimed,
+      "provider timeout",
+      { countsTowardQuarantine: false },
+    );
+    expect(result).toMatchObject({
+      stoppedReason: "provider_cooldown",
+      deferred: 1,
+      quarantined: 0,
     });
   });
 });

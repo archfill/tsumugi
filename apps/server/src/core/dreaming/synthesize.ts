@@ -11,13 +11,17 @@
  */
 
 import { getLlm } from "../../external/llm/index.js";
+import { assertLlmAvailable } from "../../external/llm/singleton.js";
 import { getEmbedder } from "../../external/embedding/singleton.js";
 import { memoryRepo } from "../../data/repos/memory.js";
 import { linkRepo } from "../../data/repos/link.js";
 import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { newId } from "../../lib/id.js";
 import { cosineSimilarity } from "../../lib/math.js";
-import { ValidationError } from "../../lib/errors.js";
+import {
+  ProviderUnavailableError,
+  ValidationError,
+} from "../../lib/errors.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -199,6 +203,7 @@ export async function synthesizeMemories(
     // 4. Process each cluster.
     for (const cluster of clustersToProcess) {
       try {
+        assertLlmAvailable("low");
         // 4a. Build user prompt.
         const userPrompt = `Cluster to merge (same-subject memories):\n${cluster
           .map((m, i) => `[${i}] (importance=${m.importance}) ${m.narrative}`)
@@ -253,17 +258,29 @@ export async function synthesizeMemories(
           memoriesArchived++;
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (err instanceof ProviderUnavailableError) {
+          errors.push(`provider: ${msg}`);
+          break;
+        }
         // Layer 2 failure tracking: record failure on each cluster member.
         for (const member of cluster) {
           await memoryRepo.recordLlmFailure(member.id);
         }
-        const msg = err instanceof Error ? err.message : String(err);
         errors.push(`cluster(${cluster.map((m) => m.id).join(",")}): ${msg}`);
       }
     }
 
-    // 5. Mark run completed.
-    await dreamingRunRepo.markCompleted(runId, newMemoriesCreated);
+    if (errors.length > 0) {
+      await dreamingRunRepo.markPartial(
+        runId,
+        newMemoriesCreated,
+        errors.join("\n"),
+        { errors },
+      );
+    } else {
+      await dreamingRunRepo.markCompleted(runId, newMemoriesCreated);
+    }
 
     return {
       runId,

@@ -1,7 +1,7 @@
 # ADR-008: LLM resilience を 3 層で構築する
 
 - 日付: 2026-06-14
-- ステータス: Accepted
+- ステータス: Accepted (2026-07-13 改訂)
 
 ## コンテキスト
 
@@ -78,6 +78,32 @@ time-update / synthesize を `listLlmEligible` 入口に切り替え、各 catch
 
 これにより Z.ai がメンテ中でも Anthropic Haiku に逃せる。
 
+### 2026-07-13 改訂: Layer 4 provider circuit と item failure の分離
+
+ADR-014 の durable promotion を本番運用した結果、同一 provider の継続障害中も各 run が
+新しい fact を先に生成し、既存 backlog を処理できないまま queue を増やす挙動を確認した。
+baseline 時点の 366 facts は complete 4 / pending 357 / deferred 5 で、time-update も
+provider failure を含む run が約 458 秒継続していた。
+
+当初 §代替案で見送った circuit breaker を、以下の条件で Layer 4 として採用する。
+
+- provider endpoint + credential を共有単位とし、tier / job をまたいで状態を共有する
+- provider client の retry budget 消費後に circuit を open する
+- cooldown は 5 分から開始し、再失敗ごとに倍増、最大 30 分とする
+- cooldown 後は half-open の単一 probe だけを許可し、成功時に閉じる
+- durable item の claim 前に preflight し、open 中は `attempt_count` を消費しない
+- provider-wide failure は item の `failure_count` と quarantine 判定に加算しない
+- `attempt_count` は lease / fencing、`failure_count` は item 固有失敗と backoff に限定する
+- observation の fact 抽出失敗も durable backoff / 5 回 quarantine を持ち、同じ入力を
+  scheduler ごとに即再試行しない
+
+promotion は既存 fact queue を先に drain し、fact が retry 待ちなら新しい observation を
+seed しない。capture promotion も downstream fact が残る間は新しい window を作成しない。
+これにより、provider 障害中の queue 増加と item の誤 quarantine を同時に防ぐ。
+
+運用上は retry / circuit event metrics、`dreaming_runs.partial`、queue item の
+`attempt_count` / `failure_count` を分けて観測する。
+
 ## 代替案と却下理由
 
 **何もしない (現状維持)**
@@ -92,8 +118,8 @@ time-update / synthesize を `listLlmEligible` 入口に切り替え、各 catch
 
 **circuit breaker (連続 N 件失敗で provider 自体を一定時間停止)**
 
-- 採用見送り: 個人運用スケールでは実害発生確率が低く、実装コストの割に効果が薄い
-- 将来 multi-tenant 化したら検討する
+- 当初は個人運用スケールでは効果が薄いとして採用を見送った
+- ADR-014 本番評価で durable queue の増加と長時間 run を確認したため、2026-07-13 改訂で採用した
 
 **dead letter queue (永久失敗 item を専用テーブルに移す)**
 

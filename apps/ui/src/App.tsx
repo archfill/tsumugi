@@ -166,7 +166,11 @@ function stateTone(state: string): string {
   if (["quarantined", "failed", "stale", "legacy_partial"].includes(state)) {
     return "critical";
   }
-  if (["deferred", "outdated", "processing", "committing"].includes(state)) {
+  if (
+    ["deferred", "outdated", "partial", "processing", "committing"].includes(
+      state,
+    )
+  ) {
     return "warning";
   }
   if (["completed", "promoted", "active"].includes(state)) return "healthy";
@@ -879,6 +883,7 @@ function OperationsView({ filters }: { filters: Filters }) {
                 <span>{issue.project_tag ?? "unscoped"}</span>
                 <span>{issue.source ?? "system"}</span>
                 {issue.attempt_count > 0 && <span>attempt {issue.attempt_count}</span>}
+                {issue.failure_count > 0 && <span>failure {issue.failure_count}</span>}
               </footer>
               {issue.last_error && <pre>{issue.last_error}</pre>}
             </article>

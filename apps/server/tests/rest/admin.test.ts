@@ -167,4 +167,37 @@ describe("Admin REST read contract", () => {
     expect(memoryRepoMock.listActive).toHaveBeenCalledWith(20, 0);
     expect(adminRepoMock.listMemories).not.toHaveBeenCalled();
   });
+
+  it("operation issueでattemptとitem failureを分離して返す", async () => {
+    adminRepoMock.listOperationIssues.mockResolvedValueOnce({
+      issues: [
+        {
+          id: "fact_1",
+          kind: "fact",
+          state: "deferred",
+          project_tag: "tsumugi",
+          source: "codex",
+          occurred_at: "2026-07-13T00:00:00.000Z",
+          attempt_count: 7,
+          failure_count: 2,
+          summary: "durable fact",
+          last_error: "malformed response",
+        },
+      ],
+      next_cursor: null,
+    });
+
+    const response = await restApp.request("/admin/operations/issues");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      issues: [
+        {
+          id: "fact_1",
+          attempt_count: 7,
+          failure_count: 2,
+        },
+      ],
+    });
+  });
 });

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ExternalError } from "../../src/lib/errors.js";
+import {
+  ExternalError,
+  ProviderUnavailableError,
+} from "../../src/lib/errors.js";
 import { createOpenAiCompatClient } from "../../src/external/llm/openai-compat.js";
 
 const baseRequest = {
@@ -141,6 +144,25 @@ describe("OpenAI-compatible LLM resilience", () => {
     });
 
     await expect(client.complete(baseRequest)).rejects.toBeInstanceOf(ExternalError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies auth errors as provider-wide without retrying", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ error: "unauthorized" }, 401));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createOpenAiCompatClient({
+      apiKey: "test",
+      model: "test-model",
+      baseUrl: "https://example.test/v1",
+      maxAttempts: 3,
+    });
+
+    await expect(client.complete(baseRequest)).rejects.toMatchObject({
+      reason: "auth",
+    } satisfies Partial<ProviderUnavailableError>);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

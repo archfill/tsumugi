@@ -33,6 +33,23 @@ export const dreamingRunRepo = {
       })
       .where(eq(dreamingRuns.id, id));
   },
+  async markPartial(
+    id: string,
+    outputCount: number,
+    error: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    await db
+      .update(dreamingRuns)
+      .set({
+        status: "partial",
+        finished_at: sql`now()`,
+        output_count: outputCount,
+        error_message: error.slice(0, 1000),
+        ...(metadata !== undefined ? { metadata } : {}),
+      })
+      .where(eq(dreamingRuns.id, id));
+  },
   async markFailed(
     id: string,
     error: string,

@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { captureRepo } from "../../data/repos/capture.js";
 import { capturePromotionWindowRepo } from "../../data/repos/capture-promotion-window.js";
+import { observationPromotionFactRepo } from "../../data/repos/observation-promotion-fact.js";
 import { withPgAdvisoryLock } from "../../data/advisory-lock.js";
 import { getEmbedder } from "../../external/embedding/singleton.js";
+import { assertLlmAvailable } from "../../external/llm/singleton.js";
+import { ProviderUnavailableError } from "../../lib/errors.js";
 import { newId } from "../../lib/id.js";
 import { summarizeObservation } from "../observation/summarize.js";
 import { buildCaptureWindows } from "./window.js";
@@ -11,7 +14,10 @@ export type PromoteCapturesStoppedReason =
   | "completed"
   | "active_run_in_progress"
   | "run_budget_exceeded"
-  | "failure_budget_exceeded";
+  | "failure_budget_exceeded"
+  | "provider_cooldown"
+  | "downstream_backpressure"
+  | "waiting_for_retry";
 
 export interface PromoteCapturesResult {
   capturesSelected: number;
@@ -51,6 +57,10 @@ function syntheticObservation(
     created_at: window.cutoff_at,
     promoted_at: null,
     promotion_state: "ready",
+    promotion_failure_count: 0,
+    promotion_next_attempt_at: window.cutoff_at,
+    promotion_last_failure_at: null,
+    promotion_last_error: null,
     search_text: window.input_content ?? "",
   };
 }
@@ -103,32 +113,10 @@ async function promoteCapturesLocked(
   options: { maxWindows: number; maxRunMs: number; maxFailures: number },
 ): Promise<PromoteCapturesResult> {
   const startedAt = Date.now();
-  const ready = await captureRepo.listReady(maxCaptures);
-  const candidates = buildCaptureWindows(ready);
+  let ready: Awaited<ReturnType<typeof captureRepo.listReady>> = [];
+  let candidates: ReturnType<typeof buildCaptureWindows> | undefined;
   let windowsCreated = 0;
-  for (const candidate of candidates) {
-    const windowId = newId("win");
-    await capturePromotionWindowRepo.create(
-      {
-        id: windowId,
-        source: candidate.source,
-        session_id: candidate.sessionId,
-        project_tag: candidate.projectTag,
-        cutoff_at: candidate.cutoffAt,
-        capture_count: candidate.captureIds.length,
-        raw_chars: candidate.rawChars,
-        completed_turns: candidate.completedTurns,
-        fallback: candidate.fallback,
-        input_content: candidate.content,
-      },
-      candidate.captureIds,
-    );
-    windowsCreated++;
-  }
-
-  const windows = await capturePromotionWindowRepo.listEligible(
-    options.maxWindows,
-  );
+  let windowsSelected = 0;
   let promoted = 0;
   let skipped = 0;
   let deferred = 0;
@@ -137,7 +125,7 @@ async function promoteCapturesLocked(
   let stoppedReason: PromoteCapturesStoppedReason = "completed";
   const errors: string[] = [];
 
-  for (const window of windows) {
+  while (windowsSelected < options.maxWindows) {
     if (Date.now() - startedAt >= options.maxRunMs) {
       stoppedReason = "run_budget_exceeded";
       break;
@@ -146,8 +134,55 @@ async function promoteCapturesLocked(
       stoppedReason = "failure_budget_exceeded";
       break;
     }
+
+    if ((await observationPromotionFactRepo.countOutstanding()) > 0) {
+      stoppedReason = "downstream_backpressure";
+      break;
+    }
+
+    const [window] = await capturePromotionWindowRepo.listEligible(1);
+    if (!window) {
+      if ((await capturePromotionWindowRepo.countOutstanding()) > 0) {
+        stoppedReason = "waiting_for_retry";
+        break;
+      }
+      if (!candidates) {
+        ready = await captureRepo.listReady(maxCaptures);
+        candidates = buildCaptureWindows(ready);
+      }
+      const candidate = candidates.shift();
+      if (!candidate) break;
+      const windowId = newId("win");
+      await capturePromotionWindowRepo.create(
+        {
+          id: windowId,
+          source: candidate.source,
+          session_id: candidate.sessionId,
+          project_tag: candidate.projectTag,
+          cutoff_at: candidate.cutoffAt,
+          capture_count: candidate.captureIds.length,
+          raw_chars: candidate.rawChars,
+          completed_turns: candidate.completedTurns,
+          fallback: candidate.fallback,
+          input_content: candidate.content,
+        },
+        candidate.captureIds,
+      );
+      windowsCreated++;
+      continue;
+    }
+
+    try {
+      assertLlmAvailable("low");
+      assertLlmAvailable("mid");
+    } catch (err) {
+      stoppedReason = "provider_cooldown";
+      errors.push(err instanceof Error ? err.message : String(err));
+      break;
+    }
     const claimedWindow = await capturePromotionWindowRepo.claim(window.id);
     if (!claimedWindow) continue;
+    windowsSelected++;
     const captures = await captureRepo.listForWindow(claimedWindow.id);
     try {
       const summary = await summarizeObservation(
@@ -191,17 +226,22 @@ async function promoteCapturesLocked(
       });
       promoted++;
     } catch (err) {
-      failures++;
       const message = err instanceof Error ? err.message : String(err);
       const outcome = await capturePromotionWindowRepo.defer(
         claimedWindow,
         message,
+        { countsTowardQuarantine: !(err instanceof ProviderUnavailableError) },
       );
       if (outcome.updated) {
         if (outcome.quarantined) quarantined++;
         else deferred++;
       }
       errors.push(`window(${claimedWindow.id}): ${message}`);
+      if (err instanceof ProviderUnavailableError) {
+        stoppedReason = "provider_cooldown";
+        break;
+      }
+      failures++;
     }
   }
 
@@ -209,7 +249,7 @@ async function promoteCapturesLocked(
   return {
     capturesSelected: ready.length,
     windowsCreated,
-    windowsSelected: windows.length,
+    windowsSelected,
     promoted,
     skipped,
     deferred,

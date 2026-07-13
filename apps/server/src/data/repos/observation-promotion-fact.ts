@@ -27,12 +27,25 @@ export const observationPromotionFactRepo = {
           .onConflictDoNothing();
         await tx
           .update(observations)
-          .set({ promotion_state: "processing" })
+          .set({
+            promotion_state: "processing",
+            promotion_failure_count: 0,
+            promotion_next_attempt_at: new Date(),
+            promotion_last_failure_at: null,
+            promotion_last_error: null,
+          })
           .where(eq(observations.id, observationId));
       } else {
         await tx
           .update(observations)
-          .set({ promotion_state: "completed", promoted_at: new Date() })
+          .set({
+            promotion_state: "completed",
+            promoted_at: new Date(),
+            promotion_failure_count: 0,
+            promotion_next_attempt_at: new Date(),
+            promotion_last_failure_at: null,
+            promotion_last_error: null,
+          })
           .where(eq(observations.id, observationId));
       }
     });
@@ -58,6 +71,15 @@ export const observationPromotionFactRepo = {
       )
       .orderBy(asc(observationPromotionFacts.created_at))
       .limit(limit);
+  },
+
+  async countOutstanding(): Promise<number> {
+    const result = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count
+      FROM observation_promotion_facts
+      WHERE status IN ('pending', 'deferred', 'processing', 'committing')
+    `);
+    return Number(result.rows[0]?.count ?? 0);
   },
 
   async claim(
@@ -213,11 +235,14 @@ export const observationPromotionFactRepo = {
   async recordFailure(
     fact: ObservationPromotionFactRow,
     error: string,
+    options?: { countsTowardQuarantine?: boolean },
   ): Promise<{ quarantined: boolean; updated: boolean }> {
-    const quarantined = fact.attempt_count >= FACT_QUARANTINE_THRESHOLD;
+    const failureCount =
+      fact.failure_count + (options?.countsTowardQuarantine === false ? 0 : 1);
+    const quarantined = failureCount >= FACT_QUARANTINE_THRESHOLD;
     const delayMs = Math.min(
       24 * 60 * 60 * 1000,
-      60_000 * 2 ** Math.max(0, fact.attempt_count - 1),
+      60_000 * 2 ** Math.max(0, failureCount - 1),
     );
     const updated = await db.transaction(async (tx) => {
       const rows = await tx
@@ -227,6 +252,7 @@ export const observationPromotionFactRepo = {
           next_attempt_at: new Date(Date.now() + delayMs),
           lease_expires_at: null,
           last_error: error,
+          failure_count: failureCount,
           updated_at: new Date(),
         })
         .where(
