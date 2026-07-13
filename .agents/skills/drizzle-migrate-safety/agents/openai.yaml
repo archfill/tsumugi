@@ -1,0 +1,8 @@
+interface:
+  display_name: "Drizzle Migration Safety"
+  short_description: "tsumugiのDrizzle migrationを安全に生成・検証"
+  default_prompt: "Use $drizzle-migrate-safety to create and validate this tsumugi schema migration safely."
+
+policy:
+  allow_implicit_invocation: true
+

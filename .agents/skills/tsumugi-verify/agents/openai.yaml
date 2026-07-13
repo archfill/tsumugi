@@ -1,0 +1,7 @@
+interface:
+  display_name: "Verify Tsumugi"
+  short_description: "変更範囲に応じてtsumugiの検証を選択・実行"
+  default_prompt: "Use $tsumugi-verify to verify the current tsumugi changes and report the exact coverage boundary."
+
+policy:
+  allow_implicit_invocation: true

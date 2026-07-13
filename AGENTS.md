@@ -171,6 +171,12 @@ forgetting / transparency / continuity) を判断基準として参照する。
 - ADR-013: search_memory default filter + provenance + outdated (Accepted)
 - ADR-014: Three-layer 化 (capture / observation / memory) (Proposed)
 
+## Subagent 協調
+
+- 同一 working tree でコードを書く agent は原則 1 体とし、root agent が write scope と統合を管理する。
+- 並列 subagent は探索・レビュー・テストなど read-heavy な作業を優先する。複数 agent の同時編集が必要なら担当ファイルを分離し、別 worktree を使う。
+- tsumugi の変更レビューには project-scoped の `tsumugi-code-reviewer` を使う。
+
 ## エージェント向けチェックリスト
 
 新規実装前に：

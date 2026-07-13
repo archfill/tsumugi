@@ -1,0 +1,4 @@
+interface:
+  display_name: "Observe Tsumugi Runtime"
+  short_description: "tsumugiのruntime品質とpipeline状態をread-onlyで観察"
+  default_prompt: "Use $tsumugi-runtime-observe to collect read-only runtime evidence and summarize the current tsumugi pipeline health."
