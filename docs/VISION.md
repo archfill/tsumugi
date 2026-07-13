@@ -28,7 +28,7 @@ tsumugi の価値は以下 5 軸の品質で測る。新 feature の採否はこ
 | **capture**      | 必要なものが残る (意識しなくても)                   | ADR-014 で Three-layer 化 (agent 主導 save + deterministic capture の dual-path) |
 | **recall**       | 必要な時に引ける                                    | ADR-013 で auto project_tag filter + hybrid (BM25 + vector + RRF)                |
 | **forgetting**   | noise / 古い情報が累積しない                        | ADR-011 inject-only / classifyNoise / dreaming archive / mark_outdated (ADR-013) |
-| **transparency** | 何が・どこから残っているか見える、編集可能          | ADR-013 で provenance surface、admin UI (yui 経由)                               |
+| **transparency** | 何が・どこから残っているか見える、編集可能          | ADR-013 provenance surface + ADR-006 Three-layer operations console              |
 | **continuity**   | session / project / device を跨いだ作業記憶の連続性 | server-based, project_tag, session_id, cross-project filter (ADR-013)            |
 
 ## 設計判断の原則
@@ -119,7 +119,7 @@ kanban) を別に持つ習慣と一致。
 | L3 Persona 層 (Tencent 風)                    | 現状の journal 路線で品質充足                               |
 | L2 Scenario 層 (Tencent 風)                   | dreaming synthesize で同等役割                              |
 | Mermaid 風 short-term canvas / Working memory | host (Claude Code) の context 管理に委ねる                  |
-| UI / 可視化 dashboard                         | yui admin で代用、tsumugi 単体での投資は後                  |
+| provenance graph visualization                | 現行の運用 trace で不足が見えた段階で再評価                  |
 | RL ベース memory CRUD                         | 研究段階、tsumugi の hand-tuned ルールから乖離が大きい      |
 | 自動 L1 抽出 trigger (every N turn)           | agent 主導 save が primary、deterministic 一元化はしない    |
 

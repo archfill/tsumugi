@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { AdminFilterQuery } from "@tsumugi/shared";
 import { runDreaming } from "../../core/dreaming/runner.js";
 import { saveCapture } from "../../core/capture/save.js";
 import { getCaptureContinuity } from "../../core/capture/continuity.js";
@@ -9,6 +10,7 @@ import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { linkRepo } from "../../data/repos/link.js";
 import { memoryRepo } from "../../data/repos/memory.js";
 import { observationRepo } from "../../data/repos/observation.js";
+import { adminRepo, type AdminScope } from "../../data/repos/admin.js";
 import { getActiveScheduler } from "../mcp/transport-http.js";
 
 export const restApp = new Hono();
@@ -23,6 +25,31 @@ function readOffset(value: string | undefined): number {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
   return Math.trunc(parsed);
+}
+
+function readAdminScope(query: Record<string, string>):
+  | { ok: true; scope: AdminScope & { cursor?: string; limit: number } }
+  | { ok: false; error: string } {
+  const parsed = AdminFilterQuery.safeParse(query);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues.map((issue) => issue.message).join(", "),
+    };
+  }
+  return {
+    ok: true,
+    scope: {
+      project: parsed.data.project,
+      source: parsed.data.source,
+      state: parsed.data.state,
+      from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+      to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+      query: parsed.data.q,
+      cursor: parsed.data.cursor,
+      limit: parsed.data.limit,
+    },
+  };
 }
 
 restApp.get("/observations", async (c) => {
@@ -77,6 +104,14 @@ restApp.get("/captures/continuity", async (c) => {
 restApp.get("/memories", async (c) => {
   const limit = readLimit(c.req.query("limit"), 100, 500);
   const offset = readOffset(c.req.query("offset"));
+  const hasAdminFilters = ["project", "source", "state", "from", "to", "q"].some(
+    (key) => c.req.query(key) !== undefined,
+  );
+  if (hasAdminFilters) {
+    const parsed = readAdminScope(c.req.query());
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    return c.json(await adminRepo.listMemories(parsed.scope, limit, offset));
+  }
   const [memories, total] = await Promise.all([
     memoryRepo.listActive(limit, offset),
     memoryRepo.countActive(),
@@ -192,4 +227,40 @@ restApp.get("/scheduler", (c) => {
     enabled: sched !== null,
     jobs: sched?.jobs ?? [],
   });
+});
+
+restApp.get("/admin/filter-options", async (c) => {
+  return c.json(await adminRepo.getFilterOptions());
+});
+
+restApp.get("/admin/overview", async (c) => {
+  const parsed = readAdminScope(c.req.query());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const overview = await adminRepo.getOverview(parsed.scope);
+  const scheduler = getActiveScheduler();
+  return c.json({
+    ...overview,
+    scheduler: {
+      enabled: scheduler !== null,
+      jobs: scheduler?.jobs ?? [],
+    },
+  });
+});
+
+restApp.get("/admin/pipeline/traces", async (c) => {
+  const parsed = readAdminScope(c.req.query());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  return c.json(await adminRepo.listPipelineTraces(parsed.scope));
+});
+
+restApp.get("/admin/pipeline/traces/:id", async (c) => {
+  const trace = await adminRepo.getPipelineTrace(c.req.param("id"));
+  if (!trace) return c.json({ error: "trace not found" }, 404);
+  return c.json(trace);
+});
+
+restApp.get("/admin/operations/issues", async (c) => {
+  const parsed = readAdminScope(c.req.query());
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  return c.json(await adminRepo.listOperationIssues(parsed.scope));
 });

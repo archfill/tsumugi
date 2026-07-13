@@ -2,30 +2,32 @@ import { useEffect, useMemo, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
+  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import type {
+  AdminFilterOptions,
+  AdminOperationIssuePage,
+  AdminOverview,
+  AdminPipelineTrace,
+  AdminPipelineTraceDetail,
+  AdminPipelineTracePage,
+} from "@tsumugi/shared";
+import { api, queryString } from "./api.js";
 
-type TabId =
-  | "observations"
-  | "memories"
-  | "decisions"
-  | "provenance"
-  | "dreaming"
-  | "settings";
+type ViewId = "overview" | "pipeline" | "memories" | "operations";
+type MemoryMode = "memories" | "decisions";
 
-interface Observation {
-  id: string;
-  content: string;
-  type: string;
+interface Filters {
+  project: string;
   source: string;
-  session_id: string | null;
-  project_tag: string | null;
-  facts: string[] | null;
-  created_at: string;
-  promoted_at: string | null;
+  state: string;
+  from: string;
+  to: string;
+  query: string;
 }
 
-interface Memory {
+interface MemoryRecord {
   id: string;
   narrative: string;
   importance: number;
@@ -33,23 +35,21 @@ interface Memory {
   created_at: string;
   updated_at: string;
   archived_at: string | null;
+  outdated_at: string | null;
+  outdated_reason: string | null;
+  llm_failure_count: number;
+  llm_quarantined_at: string | null;
+  project_tags?: string[];
+  sources?: string[];
 }
 
-interface Decision {
+interface DecisionRecord {
   id: string;
   content: string;
   status: string;
   supersedes_id: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface Link {
-  from_id: string;
-  to_id: string;
-  from_layer: string;
-  to_layer: string;
-  relation: string;
 }
 
 interface DreamingRun {
@@ -63,46 +63,97 @@ interface DreamingRun {
   error_message: string | null;
 }
 
-const tabs: { id: TabId; label: string; mark: string }[] = [
-  { id: "observations", label: "Observations", mark: "O" },
-  { id: "memories", label: "Memories", mark: "M" },
-  { id: "decisions", label: "Decisions", mark: "D" },
-  { id: "provenance", label: "Provenance", mark: "P" },
-  { id: "dreaming", label: "Dreaming runs", mark: "R" },
-  { id: "settings", label: "Settings", mark: "S" },
-];
-
-const jobs = [
-  "promote-observations",
-  "synthesize",
-  "time-update",
-  "decision-contradiction",
-  "full",
-];
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { "content-type": "application/json", ...init?.headers },
-    ...init,
-  });
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`);
-  }
-  return (await res.json()) as T;
+interface SchedulerResponse {
+  enabled: boolean;
+  jobs: Array<{ job: string; cronExpr: string }>;
 }
 
-function includesText(values: Array<string | number | null>, query: string) {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  return values.some((value) =>
-    String(value ?? "")
-      .toLowerCase()
-      .includes(normalized),
-  );
+const views: Array<{
+  id: ViewId;
+  mark: string;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "overview",
+    mark: "01",
+    label: "Overview",
+    description: "Three-layerの現在地",
+  },
+  {
+    id: "pipeline",
+    mark: "02",
+    label: "Pipeline",
+    description: "昇格経路とprovenance",
+  },
+  {
+    id: "memories",
+    mark: "03",
+    label: "Memories",
+    description: "残った知識と判断",
+  },
+  {
+    id: "operations",
+    mark: "04",
+    label: "Operations",
+    description: "滞留・失敗・schedule",
+  },
+];
+
+const emptyFilters: Filters = {
+  project: "",
+  source: "",
+  state: "",
+  from: "",
+  to: "",
+  query: "",
+};
+
+function viewFrom(value: string | null): ViewId {
+  return views.some((view) => view.id === value)
+    ? (value as ViewId)
+    : "overview";
 }
 
-function formatTime(value: string | null) {
-  if (!value) return "not yet";
+function initialLocation(): {
+  view: ViewId;
+  filters: Filters;
+  memoryMode: MemoryMode;
+} {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    view: viewFrom(params.get("view")),
+    memoryMode: params.get("mode") === "decisions" ? "decisions" : "memories",
+    filters: {
+      project: params.get("project") ?? "",
+      source: params.get("source") ?? "",
+      state: params.get("state") ?? "",
+      from: params.get("from") ?? "",
+      to: params.get("to") ?? "",
+      query: params.get("q") ?? "",
+    },
+  };
+}
+
+function isoBoundary(value: string, end = false): string | undefined {
+  if (!value) return undefined;
+  const time = end ? "T23:59:59.999" : "T00:00:00.000";
+  return new Date(`${value}${time}`).toISOString();
+}
+
+function scopeParams(filters: Filters) {
+  return {
+    project: filters.project || undefined,
+    source: filters.source || undefined,
+    state: filters.state || undefined,
+    from: isoBoundary(filters.from),
+    to: isoBoundary(filters.to, true),
+    q: filters.query.trim() || undefined,
+  };
+}
+
+function formatTime(value: string | null | undefined): string {
+  if (!value) return "—";
   return new Intl.DateTimeFormat("ja-JP", {
     month: "2-digit",
     day: "2-digit",
@@ -111,666 +162,905 @@ function formatTime(value: string | null) {
   }).format(new Date(value));
 }
 
-function StatusPill({ value }: { value: string }) {
-  return <span className={`pill pill-${value}`}>{value}</span>;
+function stateTone(state: string): string {
+  if (["quarantined", "failed", "stale", "legacy_partial"].includes(state)) {
+    return "critical";
+  }
+  if (["deferred", "outdated", "processing", "committing"].includes(state)) {
+    return "warning";
+  }
+  if (["completed", "promoted", "active"].includes(state)) return "healthy";
+  return "neutral";
 }
 
-const PAGE_SIZE = {
-  observations: 200,
-  memories: 200,
-  decisions: 200,
-  links: 500,
-  runs: 50,
-} as const;
-
-interface PagedResponse<F extends string, T> {
-  total: number;
-  rows: T[];
-  field: F;
+function StatePill({ state }: { state: string }) {
+  return <span className={`state-pill ${stateTone(state)}`}>{state}</span>;
 }
 
-function makeListQueryFn<F extends string, T>(
-  path: string,
-  field: F,
-  pageSize: number,
-) {
-  return async ({ pageParam = 0 }: { pageParam: number }) => {
-    const data = (await api(
-      `${path}?limit=${pageSize}&offset=${pageParam}`,
-    )) as {
-      total: number;
-    } & Record<F, T[]>;
-    return {
-      total: data.total ?? 0,
-      rows: data[field] ?? [],
-      field,
-    } satisfies PagedResponse<F, T>;
-  };
-}
-
-function flattenPages<F extends string, T>(
-  pages: PagedResponse<F, T>[] | undefined,
-): T[] {
-  if (!pages) return [];
-  return pages.flatMap((p) => p.rows);
-}
-
-function totalFrom<F extends string, T>(
-  pages: PagedResponse<F, T>[] | undefined,
-): number {
-  return pages?.[0]?.total ?? 0;
-}
-
-/** 末尾要素が viewport に入ったら fetchNextPage を呼ぶ。
- *  callback ref で node を state 化することで、タブ切替で sentinel が
- *  unmount → 再 mount しても observer が再アタッチされる。 */
-function useInfiniteScrollSentinel(
-  hasNextPage: boolean,
-  isFetchingNextPage: boolean,
-  fetchNextPage: () => void,
-) {
-  const [node, setNode] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!node) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry?.isIntersecting && hasNextPage && !isFetchingNextPage) {
-          fetchNextPage();
-        }
-      },
-      { rootMargin: "200px 0px" },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [node, hasNextPage, isFetchingNextPage, fetchNextPage]);
-  return setNode;
-}
-
-function makeGetNextPageParam<F extends string, T>(pageSize: number) {
+function ErrorPanel({ error }: { error: unknown }) {
   return (
-    lastPage: PagedResponse<F, T>,
-    allPages: PagedResponse<F, T>[],
-  ): number | undefined => {
-    const loaded = allPages.reduce((s, p) => s + p.rows.length, 0);
-    if (loaded >= lastPage.total) return undefined;
-    return loaded;
-  };
+    <div className="message error-message" role="alert">
+      <strong>Data could not be loaded.</strong>
+      <span>{error instanceof Error ? error.message : String(error)}</span>
+    </div>
+  );
 }
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>("observations");
-  const [query, setQuery] = useState("");
-  const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
-  const [dreamJob, setDreamJob] = useState("promote-observations");
+function LoadingPanel() {
+  return <div className="message">Reading the current ledger…</div>;
+}
+
+function FilterBar({
+  filters,
+  onChange,
+  options,
+  states,
+}: {
+  filters: Filters;
+  onChange: (next: Filters) => void;
+  options?: AdminFilterOptions;
+  states: string[];
+}) {
+  const update = (key: keyof Filters, value: string) =>
+    onChange({ ...filters, [key]: value });
+
+  return (
+    <section className="filter-bar" aria-label="表示範囲">
+      <label className="filter-search">
+        <span>Search</span>
+        <input
+          value={filters.query}
+          onChange={(event) => update("query", event.target.value)}
+          placeholder="id, content, project…"
+        />
+      </label>
+      <label>
+        <span>Project</span>
+        <select
+          value={filters.project}
+          onChange={(event) => update("project", event.target.value)}
+        >
+          <option value="">All projects</option>
+          {options?.projects.map((project) => (
+            <option key={project} value={project}>
+              {project}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>Source</span>
+        <select
+          value={filters.source}
+          onChange={(event) => update("source", event.target.value)}
+        >
+          <option value="">All sources</option>
+          {options?.sources.map((source) => (
+            <option key={source} value={source}>
+              {source}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>State</span>
+        <select
+          value={filters.state}
+          disabled={states.length === 0}
+          onChange={(event) => update("state", event.target.value)}
+        >
+          <option value="">All states</option>
+          {states.map((state) => (
+            <option key={state} value={state}>
+              {state}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>From</span>
+        <input
+          type="date"
+          value={filters.from}
+          onChange={(event) => update("from", event.target.value)}
+        />
+      </label>
+      <label>
+        <span>To</span>
+        <input
+          type="date"
+          value={filters.to}
+          onChange={(event) => update("to", event.target.value)}
+        />
+      </label>
+      <button
+        type="button"
+        className="quiet-button"
+        onClick={() => onChange(emptyFilters)}
+        disabled={Object.values(filters).every((value) => value === "")}
+      >
+        Clear
+      </button>
+    </section>
+  );
+}
+
+function OverviewView({ filters }: { filters: Filters }) {
+  const overview = useQuery({
+    queryKey: ["admin-overview", filters],
+    queryFn: () =>
+      api<AdminOverview>(`/admin/overview${queryString(scopeParams(filters))}`),
+  });
+
+  if (overview.isLoading) return <LoadingPanel />;
+  if (overview.error) return <ErrorPanel error={overview.error} />;
+  if (!overview.data) return null;
+
+  const layerByName = Object.fromEntries(
+    overview.data.layers.map((layer) => [layer.layer, layer]),
+  );
+  const stages = [
+    { key: "capture", label: "Capture", note: "deterministic intake" },
+    { key: "observation", label: "Observation", note: "durable facts" },
+    { key: "memory", label: "Memory", note: "recalled knowledge" },
+  ] as const;
+
+  return (
+    <div className="view-stack">
+      <section className="loom-rail" aria-label="Three-layer pipeline summary">
+        {stages.map((stage, index) => {
+          const layer = layerByName[stage.key];
+          return (
+            <div className="loom-stage-wrap" key={stage.key}>
+              <article className="loom-stage">
+                <div className="stage-heading">
+                  <span className="stage-index">L{index + 1}</span>
+                  <div>
+                    <h3>{stage.label}</h3>
+                    <p>{stage.note}</p>
+                  </div>
+                </div>
+                <strong>{layer?.total.toLocaleString() ?? 0}</strong>
+                <div className="stage-meta">
+                  <span>+{layer?.created_24h.toLocaleString() ?? 0} / 24h</span>
+                  <span>oldest {formatTime(layer?.oldest_actionable_at)}</span>
+                </div>
+                <div className="state-line">
+                  {Object.entries(layer?.states ?? {}).map(([state, count]) => (
+                    <span key={state}>
+                      {state} <b>{count.toLocaleString()}</b>
+                    </span>
+                  ))}
+                </div>
+              </article>
+              {index < stages.length - 1 && (
+                <div className="loom-connector" aria-hidden="true">
+                  <span />
+                  <i />
+                  <span />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="overview-grid">
+        <article className="ledger-panel attention-panel">
+          <header className="panel-heading">
+            <div>
+              <p className="eyebrow">Attention</p>
+              <h3>Review queue</h3>
+            </div>
+            <strong>{overview.data.attention_count.toLocaleString()}</strong>
+          </header>
+          <p>
+            deferred、quarantined、stale lease、outdated、failed runの合計です。
+          </p>
+        </article>
+
+        <article className="ledger-panel">
+          <header className="panel-heading">
+            <div>
+              <p className="eyebrow">Durable work</p>
+              <h3>Promotion queues</h3>
+            </div>
+          </header>
+          <div className="queue-list">
+            {overview.data.queues.map((queue) => (
+              <div key={queue.stage}>
+                <strong>{queue.stage}</strong>
+                <span>{queue.total.toLocaleString()} total</span>
+                <span>oldest {formatTime(queue.oldest_actionable_at)}</span>
+                <div className="state-line compact">
+                  {Object.entries(queue.states).map(([state, count]) => (
+                    <span key={state}>
+                      {state} <b>{count.toLocaleString()}</b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="ledger-panel scheduler-panel">
+          <header className="panel-heading">
+            <div>
+              <p className="eyebrow">Scheduler</p>
+              <h3>{overview.data.scheduler.enabled ? "6-job clock" : "Disabled"}</h3>
+            </div>
+          </header>
+          <div className="schedule-list">
+            {overview.data.scheduler.jobs.map((job) => (
+              <div key={job.job}>
+                <span>{job.job}</span>
+                <code>{job.cronExpr}</code>
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+    </div>
+  );
+}
+
+function PipelineDetail({
+  traceId,
+  onClose,
+}: {
+  traceId: string;
+  onClose: () => void;
+}) {
+  const detail = useQuery({
+    queryKey: ["pipeline-trace", traceId],
+    queryFn: () =>
+      api<AdminPipelineTraceDetail>(`/admin/pipeline/traces/${traceId}`),
+  });
+
+  return (
+    <aside className="detail-drawer pipeline-detail" aria-label="Pipeline trace detail">
+      <header className="drawer-heading">
+        <div>
+          <p className="eyebrow">Trace</p>
+          <h3>{traceId}</h3>
+        </div>
+        <button type="button" className="quiet-button" onClick={onClose}>
+          Close
+        </button>
+      </header>
+      {detail.isLoading && <LoadingPanel />}
+      {detail.error && <ErrorPanel error={detail.error} />}
+      {detail.data && (
+        <div className="trace-nodes">
+          {detail.data.nodes.map((node) => (
+            <article className="trace-node" key={node.id}>
+              <header>
+                <span className="node-kind">{node.kind}</span>
+                <StatePill state={node.state} />
+                <time>{formatTime(node.occurred_at)}</time>
+              </header>
+              <code>{node.id}</code>
+              {node.summary && <p>{node.summary}</p>}
+              <dl>
+                {Object.entries(node.metadata)
+                  .filter(([, value]) => value !== null && value !== undefined)
+                  .map(([key, value]) => (
+                    <div key={key}>
+                      <dt>{key}</dt>
+                      <dd>
+                        {typeof value === "string"
+                          ? value
+                          : JSON.stringify(value)}
+                      </dd>
+                    </div>
+                  ))}
+              </dl>
+            </article>
+          ))}
+          {detail.data.edges.length > 0 && (
+            <section className="edge-list">
+              <h4>Provenance edges</h4>
+              {detail.data.edges.map((edge, index) => (
+                <p key={`${edge.from_id}-${edge.to_id}-${edge.relation}-${index}`}>
+                  <code>{edge.from_id}</code>
+                  <span>{edge.relation}</span>
+                  <code>{edge.to_id}</code>
+                </p>
+              ))}
+            </section>
+          )}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function PipelineView({ filters }: { filters: Filters }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const traces = useInfiniteQuery({
+    queryKey: ["pipeline-traces", filters],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      api<AdminPipelineTracePage>(
+        `/admin/pipeline/traces${queryString({
+          ...scopeParams(filters),
+          cursor: pageParam,
+          limit: 50,
+        })}`,
+      ),
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+  });
+  const rows = traces.data?.pages.flatMap((page) => page.traces) ?? [];
+
+  return (
+    <div className={selected ? "master-detail has-detail" : "master-detail"}>
+      <section className="ledger-panel table-panel">
+        <header className="panel-heading">
+          <div>
+            <p className="eyebrow">Promotion traces</p>
+            <h3>{rows.length.toLocaleString()} loaded</h3>
+          </div>
+          <button type="button" onClick={() => void traces.refetch()}>
+            Refresh
+          </button>
+        </header>
+        {traces.isLoading && <LoadingPanel />}
+        {traces.error && <ErrorPanel error={traces.error} />}
+        <div className="trace-table" role="list">
+          {rows.map((trace: AdminPipelineTrace) => (
+            <button
+              type="button"
+              className={selected === trace.id ? "trace-row selected" : "trace-row"}
+              key={trace.id}
+              onClick={() => setSelected(trace.id)}
+            >
+              <span className="trace-time">{formatTime(trace.sort_at)}</span>
+              <span className="trace-path">{trace.path}</span>
+              <span className="trace-main">
+                <code>{trace.id}</code>
+                <b>{trace.project_tag ?? "untagged"}</b>
+                <small>
+                  {trace.source} · {trace.session_id ?? "no session"}
+                </small>
+                {trace.summary && <span>{trace.summary}</span>}
+              </span>
+              <span className="trace-counts">
+                <span>C {trace.capture_count}</span>
+                <span>F {trace.completed_fact_count}/{trace.fact_count}</span>
+                <span>M {trace.memory_count}</span>
+              </span>
+              <StatePill state={trace.state} />
+            </button>
+          ))}
+        </div>
+        {traces.hasNextPage && (
+          <button
+            type="button"
+            className="load-more"
+            disabled={traces.isFetchingNextPage}
+            onClick={() => void traces.fetchNextPage()}
+          >
+            {traces.isFetchingNextPage ? "Loading…" : "Load next 50"}
+          </button>
+        )}
+      </section>
+      {selected && (
+        <PipelineDetail traceId={selected} onClose={() => setSelected(null)} />
+      )}
+    </div>
+  );
+}
+
+function MemoryDetail({
+  memory,
+  onClose,
+}: {
+  memory: MemoryRecord;
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
+  const [narrative, setNarrative] = useState(memory.narrative);
+  const [kind, setKind] = useState(memory.kind);
+  const [importance, setImportance] = useState(String(memory.importance));
 
-  // タブ切替時は前タブのスクロール位置を引き継がず最上部に戻す
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "auto" });
-  }, [activeTab]);
-
-  const observations = useInfiniteQuery({
-    queryKey: ["observations"],
-    initialPageParam: 0,
-    queryFn: makeListQueryFn<"observations", Observation>(
-      "/observations",
-      "observations",
-      PAGE_SIZE.observations,
-    ),
-    getNextPageParam: makeGetNextPageParam<"observations", Observation>(
-      PAGE_SIZE.observations,
-    ),
-  });
-  const memories = useInfiniteQuery({
-    queryKey: ["memories"],
-    initialPageParam: 0,
-    queryFn: makeListQueryFn<"memories", Memory>(
-      "/memories",
-      "memories",
-      PAGE_SIZE.memories,
-    ),
-    getNextPageParam: makeGetNextPageParam<"memories", Memory>(
-      PAGE_SIZE.memories,
-    ),
-  });
-  const decisions = useInfiniteQuery({
-    queryKey: ["decisions"],
-    initialPageParam: 0,
-    queryFn: makeListQueryFn<"decisions", Decision>(
-      "/decisions",
-      "decisions",
-      PAGE_SIZE.decisions,
-    ),
-    getNextPageParam: makeGetNextPageParam<"decisions", Decision>(
-      PAGE_SIZE.decisions,
-    ),
-  });
-  const links = useInfiniteQuery({
-    queryKey: ["links"],
-    initialPageParam: 0,
-    queryFn: makeListQueryFn<"links", Link>("/links", "links", PAGE_SIZE.links),
-    getNextPageParam: makeGetNextPageParam<"links", Link>(PAGE_SIZE.links),
-  });
-  const runs = useInfiniteQuery({
-    queryKey: ["dreaming-runs"],
-    initialPageParam: 0,
-    queryFn: makeListQueryFn<"runs", DreamingRun>(
-      "/dreaming/runs",
-      "runs",
-      PAGE_SIZE.runs,
-    ),
-    getNextPageParam: makeGetNextPageParam<"runs", DreamingRun>(PAGE_SIZE.runs),
-  });
-
-  const observationsRows = useMemo(
-    () => flattenPages(observations.data?.pages),
-    [observations.data?.pages],
-  );
-  const memoriesRows = useMemo(
-    () => flattenPages(memories.data?.pages),
-    [memories.data?.pages],
-  );
-  const decisionsRows = useMemo(
-    () => flattenPages(decisions.data?.pages),
-    [decisions.data?.pages],
-  );
-  const linksRows = useMemo(
-    () => flattenPages(links.data?.pages),
-    [links.data?.pages],
-  );
-  const runsRows = useMemo(
-    () => flattenPages(runs.data?.pages),
-    [runs.data?.pages],
-  );
-
-  const observationsTotal = totalFrom(observations.data?.pages);
-  const memoriesTotal = totalFrom(memories.data?.pages);
-  const decisionsTotal = totalFrom(decisions.data?.pages);
-  const linksTotal = totalFrom(links.data?.pages);
-  const runsTotal = totalFrom(runs.data?.pages);
-
-  const obsSentinelRef = useInfiniteScrollSentinel(
-    !!observations.hasNextPage,
-    observations.isFetchingNextPage,
-    observations.fetchNextPage,
-  );
-  const memSentinelRef = useInfiniteScrollSentinel(
-    !!memories.hasNextPage,
-    memories.isFetchingNextPage,
-    memories.fetchNextPage,
-  );
-  const decSentinelRef = useInfiniteScrollSentinel(
-    !!decisions.hasNextPage,
-    decisions.isFetchingNextPage,
-    decisions.fetchNextPage,
-  );
-  const linksSentinelRef = useInfiniteScrollSentinel(
-    !!links.hasNextPage,
-    links.isFetchingNextPage,
-    links.fetchNextPage,
-  );
-  const runsSentinelRef = useInfiniteScrollSentinel(
-    !!runs.hasNextPage,
-    runs.isFetchingNextPage,
-    runs.fetchNextPage,
-  );
-
-  const deleteObservation = useMutation({
-    mutationFn: (id: string) =>
-      api<{ ok: true }>(`/observations/${id}`, { method: "DELETE" }),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["observations"] }),
-  });
-
-  const archiveMemory = useMutation({
-    mutationFn: (id: string) =>
-      api<{ ok: true }>(`/memories/${id}/archive`, { method: "POST" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["memories"] }),
-  });
+    setNarrative(memory.narrative);
+    setKind(memory.kind);
+    setImportance(String(memory.importance));
+  }, [memory]);
 
   const updateMemory = useMutation({
-    mutationFn: (memory: Memory) =>
+    mutationFn: () =>
       api<{ ok: true }>(`/memories/${memory.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          narrative: memory.narrative,
-          importance: memory.importance,
-          kind: memory.kind,
+          narrative,
+          kind,
+          importance: Number(importance),
         }),
       }),
-    onSuccess: () => {
-      setSelectedMemory(null);
-      queryClient.invalidateQueries({ queryKey: ["memories"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["memories"] });
+    },
+  });
+  const archiveMemory = useMutation({
+    mutationFn: () =>
+      api<{ ok: true }>(`/memories/${memory.id}/archive`, { method: "POST" }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["memories"] });
+      onClose();
     },
   });
 
-  const triggerDreaming = useMutation({
-    mutationFn: (job: string) =>
-      api("/dreaming/trigger", {
-        method: "POST",
-        body: JSON.stringify({ job }),
-      }),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["dreaming-runs"] }),
+  return (
+    <aside className="detail-drawer memory-detail" aria-label="Memory detail">
+      <header className="drawer-heading">
+        <div>
+          <p className="eyebrow">Memory</p>
+          <h3>{memory.id}</h3>
+        </div>
+        <button type="button" className="quiet-button" onClick={onClose}>
+          Close
+        </button>
+      </header>
+      <div className="memory-state-line">
+        <StatePill
+          state={
+            memory.archived_at
+              ? "archived"
+              : memory.outdated_at
+                ? "outdated"
+                : memory.llm_quarantined_at
+                  ? "quarantined"
+                  : "active"
+          }
+        />
+        <span>updated {formatTime(memory.updated_at)}</span>
+      </div>
+      <label>
+        <span>Narrative</span>
+        <textarea value={narrative} onChange={(event) => setNarrative(event.target.value)} />
+      </label>
+      <div className="form-pair">
+        <label>
+          <span>Kind</span>
+          <input value={kind} onChange={(event) => setKind(event.target.value)} />
+        </label>
+        <label>
+          <span>Importance</span>
+          <input
+            type="number"
+            min="0"
+            max="10"
+            step="0.5"
+            value={importance}
+            onChange={(event) => setImportance(event.target.value)}
+          />
+        </label>
+      </div>
+      <dl className="memory-provenance">
+        <div>
+          <dt>Projects</dt>
+          <dd>{memory.project_tags?.join(", ") || "—"}</dd>
+        </div>
+        <div>
+          <dt>Sources</dt>
+          <dd>{memory.sources?.join(", ") || "—"}</dd>
+        </div>
+        {memory.outdated_reason && (
+          <div>
+            <dt>Outdated reason</dt>
+            <dd>{memory.outdated_reason}</dd>
+          </div>
+        )}
+      </dl>
+      {(updateMemory.error || archiveMemory.error) && (
+        <ErrorPanel error={updateMemory.error ?? archiveMemory.error} />
+      )}
+      <footer className="drawer-actions">
+        <button
+          type="button"
+          disabled={updateMemory.isPending || narrative.trim() === ""}
+          onClick={() => updateMemory.mutate()}
+        >
+          {updateMemory.isPending ? "Saving…" : "Save changes"}
+        </button>
+        {!memory.archived_at && (
+          <button
+            type="button"
+            className="danger-button"
+            disabled={archiveMemory.isPending}
+            onClick={() => {
+              if (confirm(`Archive memory ${memory.id}?`)) archiveMemory.mutate();
+            }}
+          >
+            Archive
+          </button>
+        )}
+      </footer>
+    </aside>
+  );
+}
+
+function MemoriesView({
+  filters,
+  mode,
+  onModeChange,
+}: {
+  filters: Filters;
+  mode: MemoryMode;
+  onModeChange: (mode: MemoryMode) => void;
+}) {
+  const [selected, setSelected] = useState<MemoryRecord | null>(null);
+  const memories = useInfiniteQuery({
+    queryKey: ["memories", filters],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
+      api<{ memories: MemoryRecord[]; total: number }>(
+        `/memories${queryString({
+          ...scopeParams(filters),
+          limit: 100,
+          offset: pageParam,
+        })}`,
+      ),
+    getNextPageParam: (page, pages) => {
+      const loaded = pages.reduce((sum, current) => sum + current.memories.length, 0);
+      return loaded < page.total ? loaded : undefined;
+    },
+  });
+  const decisions = useQuery({
+    queryKey: ["decisions"],
+    queryFn: () => api<{ decisions: DecisionRecord[]; total: number }>("/decisions?limit=500"),
+    enabled: mode === "decisions",
+  });
+  const memoryRows = memories.data?.pages.flatMap((page) => page.memories) ?? [];
+  const memoryTotal = memories.data?.pages[0]?.total ?? 0;
+  const decisionRows = useMemo(() => {
+    const query = filters.query.trim().toLowerCase();
+    return (decisions.data?.decisions ?? []).filter((decision) => {
+      if (filters.state && decision.status !== filters.state) return false;
+      if (filters.from && decision.updated_at < isoBoundary(filters.from)!) return false;
+      if (filters.to && decision.updated_at > isoBoundary(filters.to, true)!) return false;
+      return !query || `${decision.id} ${decision.content}`.toLowerCase().includes(query);
+    });
+  }, [decisions.data, filters]);
+
+  return (
+    <div className={selected ? "master-detail has-detail" : "master-detail"}>
+      <section className="ledger-panel table-panel">
+        <header className="panel-heading memory-heading">
+          <div>
+            <p className="eyebrow">Knowledge ledger</p>
+            <h3>
+              {mode === "memories"
+                ? `${memoryRows.length.toLocaleString()} / ${memoryTotal.toLocaleString()}`
+                : `${decisionRows.length.toLocaleString()} decisions`}
+            </h3>
+          </div>
+          <div className="segmented" aria-label="Memory views">
+            <button
+              type="button"
+              className={mode === "memories" ? "active" : ""}
+              onClick={() => onModeChange("memories")}
+            >
+              Memories
+            </button>
+            <button
+              type="button"
+              className={mode === "decisions" ? "active" : ""}
+              onClick={() => onModeChange("decisions")}
+            >
+              Decisions
+            </button>
+          </div>
+        </header>
+        {mode === "memories" && (
+          <>
+            {memories.isLoading && <LoadingPanel />}
+            {memories.error && <ErrorPanel error={memories.error} />}
+            <div className="memory-table" role="list">
+              {memoryRows.map((memory) => {
+                const state = memory.archived_at
+                  ? "archived"
+                  : memory.outdated_at
+                    ? "outdated"
+                    : memory.llm_quarantined_at
+                      ? "quarantined"
+                      : "active";
+                return (
+                  <button
+                    type="button"
+                    className={selected?.id === memory.id ? "memory-row selected" : "memory-row"}
+                    key={memory.id}
+                    onClick={() => setSelected(memory)}
+                  >
+                    <time>{formatTime(memory.updated_at)}</time>
+                    <span className="memory-main">
+                      <b>{memory.narrative}</b>
+                      <code>{memory.id}</code>
+                      <small>
+                        {memory.project_tags?.join(", ") || "no provenance project"}
+                      </small>
+                    </span>
+                    <span>{memory.kind}</span>
+                    <span className="importance">{memory.importance.toFixed(1)}</span>
+                    <StatePill state={state} />
+                  </button>
+                );
+              })}
+            </div>
+            {memories.hasNextPage && (
+              <button
+                type="button"
+                className="load-more"
+                disabled={memories.isFetchingNextPage}
+                onClick={() => void memories.fetchNextPage()}
+              >
+                {memories.isFetchingNextPage ? "Loading…" : "Load next 100"}
+              </button>
+            )}
+          </>
+        )}
+        {mode === "decisions" && (
+          <>
+            {decisions.isLoading && <LoadingPanel />}
+            {decisions.error && <ErrorPanel error={decisions.error} />}
+            <div className="decision-table">
+              {decisionRows.map((decision) => (
+                <article key={decision.id}>
+                  <time>{formatTime(decision.updated_at)}</time>
+                  <p>{decision.content}</p>
+                  <code>{decision.id}</code>
+                  <StatePill state={decision.status} />
+                  {decision.supersedes_id && (
+                    <small>supersedes {decision.supersedes_id}</small>
+                  )}
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+      {selected && <MemoryDetail memory={selected} onClose={() => setSelected(null)} />}
+    </div>
+  );
+}
+
+function OperationsView({ filters }: { filters: Filters }) {
+  const issues = useInfiniteQuery({
+    queryKey: ["operation-issues", filters],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      api<AdminOperationIssuePage>(
+        `/admin/operations/issues${queryString({
+          ...scopeParams(filters),
+          cursor: pageParam,
+          limit: 50,
+        })}`,
+      ),
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+  });
+  const runs = useQuery({
+    queryKey: ["dreaming-runs"],
+    queryFn: () => api<{ runs: DreamingRun[]; total: number }>("/dreaming/runs?limit=50"),
+  });
+  const scheduler = useQuery({
+    queryKey: ["scheduler"],
+    queryFn: () => api<SchedulerResponse>("/scheduler"),
+  });
+  const issueRows = issues.data?.pages.flatMap((page) => page.issues) ?? [];
+
+  return (
+    <div className="operations-grid">
+      <section className="ledger-panel issue-panel">
+        <header className="panel-heading">
+          <div>
+            <p className="eyebrow">Needs review</p>
+            <h3>{issueRows.length.toLocaleString()} issues loaded</h3>
+          </div>
+          <button type="button" onClick={() => void issues.refetch()}>
+            Refresh
+          </button>
+        </header>
+        {issues.isLoading && <LoadingPanel />}
+        {issues.error && <ErrorPanel error={issues.error} />}
+        <div className="issue-list">
+          {issueRows.map((issue) => (
+            <article key={`${issue.kind}-${issue.id}`}>
+              <header>
+                <span>{issue.kind}</span>
+                <StatePill state={issue.state} />
+                <time>{formatTime(issue.occurred_at)}</time>
+              </header>
+              <code>{issue.id}</code>
+              {issue.summary && <p>{issue.summary}</p>}
+              <footer>
+                <span>{issue.project_tag ?? "unscoped"}</span>
+                <span>{issue.source ?? "system"}</span>
+                {issue.attempt_count > 0 && <span>attempt {issue.attempt_count}</span>}
+              </footer>
+              {issue.last_error && <pre>{issue.last_error}</pre>}
+            </article>
+          ))}
+          {!issues.isLoading && issueRows.length === 0 && (
+            <div className="message">No operational issues in this scope.</div>
+          )}
+        </div>
+        {issues.hasNextPage && (
+          <button
+            type="button"
+            className="load-more"
+            onClick={() => void issues.fetchNextPage()}
+          >
+            Load next 50
+          </button>
+        )}
+      </section>
+
+      <div className="operations-side">
+        <section className="ledger-panel">
+          <header className="panel-heading">
+            <div>
+              <p className="eyebrow">Clock</p>
+              <h3>{scheduler.data?.enabled ? "Scheduler active" : "Scheduler disabled"}</h3>
+            </div>
+          </header>
+          {scheduler.error && <ErrorPanel error={scheduler.error} />}
+          <div className="schedule-list">
+            {scheduler.data?.jobs.map((job) => (
+              <div key={job.job}>
+                <span>{job.job}</span>
+                <code>{job.cronExpr}</code>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="ledger-panel">
+          <header className="panel-heading">
+            <div>
+              <p className="eyebrow">Execution history</p>
+              <h3>{runs.data?.total.toLocaleString() ?? "—"} runs</h3>
+            </div>
+          </header>
+          {runs.error && <ErrorPanel error={runs.error} />}
+          <div className="run-list">
+            {runs.data?.runs.map((run) => (
+              <article key={run.id}>
+                <time>{formatTime(run.started_at)}</time>
+                <b>{run.job_kind}</b>
+                <StatePill state={run.status} />
+                <span>
+                  {run.input_count} in / {run.output_count} out
+                </span>
+                {run.error_message && <p>{run.error_message}</p>}
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const initial = useMemo(initialLocation, []);
+  const [activeView, setActiveView] = useState<ViewId>(initial.view);
+  const [filters, setFilters] = useState<Filters>(initial.filters);
+  const [memoryMode, setMemoryMode] = useState<MemoryMode>(initial.memoryMode);
+  const filterOptions = useQuery({
+    queryKey: ["admin-filter-options"],
+    queryFn: () => api<AdminFilterOptions>("/admin/filter-options"),
+    staleTime: 5 * 60_000,
   });
 
-  const filteredObservations = useMemo(
-    () =>
-      observationsRows.filter((item) =>
-        includesText(
-          [item.id, item.content, item.type, item.source, item.project_tag],
-          query,
-        ),
-      ),
-    [observationsRows, query],
-  );
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set("view", activeView);
+    if (activeView === "memories") params.set("mode", memoryMode);
+    if (filters.project) params.set("project", filters.project);
+    if (filters.source) params.set("source", filters.source);
+    if (filters.state) params.set("state", filters.state);
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    if (filters.query) params.set("q", filters.query);
+    window.history.replaceState(null, "", `?${params.toString()}`);
+  }, [activeView, filters, memoryMode]);
 
-  const filteredMemories = useMemo(
-    () =>
-      memoriesRows.filter((item) =>
-        includesText(
-          [item.id, item.narrative, item.kind, item.importance],
-          query,
-        ),
-      ),
-    [memoriesRows, query],
-  );
+  useEffect(() => {
+    const onPopState = () => {
+      const next = initialLocation();
+      setActiveView(next.view);
+      setFilters(next.filters);
+      setMemoryMode(next.memoryMode);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
-  const filteredDecisions = useMemo(
-    () =>
-      decisionsRows.filter((item) =>
-        includesText(
-          [item.id, item.content, item.status, item.supersedes_id],
-          query,
-        ),
-      ),
-    [decisionsRows, query],
-  );
-
-  const filteredLinks = useMemo(
-    () =>
-      linksRows.filter((item) =>
-        includesText(
-          [
-            item.from_id,
-            item.to_id,
-            item.relation,
-            item.from_layer,
-            item.to_layer,
-          ],
-          query,
-        ),
-      ),
-    [linksRows, query],
-  );
-
-  const filteredRuns = useMemo(
-    () =>
-      runsRows.filter((item) =>
-        includesText(
-          [item.id, item.job_kind, item.status, item.error_message],
-          query,
-        ),
-      ),
-    [runsRows, query],
-  );
+  const stateOptions =
+    activeView === "pipeline"
+      ? (filterOptions.data?.states.pipeline ?? [])
+      : activeView === "memories"
+        ? memoryMode === "decisions"
+          ? ["in_progress", "completed", "superseded", "archived"]
+          : (filterOptions.data?.states.memories ?? [])
+        : activeView === "operations"
+          ? (filterOptions.data?.states.operations ?? [])
+          : [];
+  const currentView = views.find((view) => view.id === activeView)!;
 
   return (
     <main className="shell">
       <aside className="sidebar">
-        <div>
+        <div className="brand">
           <p className="eyebrow">tsumugi admin</p>
           <h1>紬</h1>
-          <p className="sidebar-copy">Observation から Memory へ紡ぐ管理卓。</p>
+          <p>記憶が残るまでの工程を、静かに見守る運用卓。</p>
         </div>
         <nav className="nav" aria-label="Admin views">
-          {tabs.map((tab) => (
+          {views.map((view) => (
             <button
-              key={tab.id}
+              key={view.id}
               type="button"
-              className={activeTab === tab.id ? "nav-item active" : "nav-item"}
-              onClick={() => setActiveTab(tab.id)}
-              title={tab.label}
+              className={activeView === view.id ? "nav-item active" : "nav-item"}
+              onClick={() => {
+                setActiveView(view.id);
+                setFilters({ ...filters, state: "" });
+              }}
             >
-              <span>{tab.mark}</span>
-              {tab.label}
+              <span>{view.mark}</span>
+              <b>{view.label}</b>
+              <small>{view.description}</small>
             </button>
           ))}
         </nav>
+        <div className="sidebar-status">
+          <span className={filterOptions.isError ? "status-dot error" : "status-dot"} />
+          <div>
+            <b>{filterOptions.isError ? "API unavailable" : "Read-only scope active"}</b>
+            <small>new operations remain disabled</small>
+          </div>
+        </div>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Phase 3 console</p>
-            <h2>{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
+            <p className="eyebrow">Three-layer console</p>
+            <h2>{currentView.label}</h2>
+            <p>{currentView.description}</p>
           </div>
-          <label className="search">
-            <span>Search</span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="id, content, tag..."
-            />
-          </label>
+          <div className="topbar-note">
+            <span>Capture</span>
+            <i />
+            <span>Observation</span>
+            <i />
+            <span>Memory</span>
+          </div>
         </header>
 
-        {activeTab === "observations" && (
-          <section className="panel">
-            <div className="panel-head">
-              <strong>
-                {filteredObservations.length} shown / {observationsRows.length}{" "}
-                loaded / {observationsTotal} total
-              </strong>
-              <button onClick={() => observations.refetch()} type="button">
-                Refresh
-              </button>
-            </div>
-            <div className="list">
-              {filteredObservations.map((item) => (
-                <article className="row" key={item.id}>
-                  <div>
-                    <div className="row-meta">
-                      <StatusPill value={item.type} />
-                      <span>{item.source}</span>
-                      <span>{formatTime(item.created_at)}</span>
-                      <span>{item.promoted_at ? "promoted" : "pending"}</span>
-                    </div>
-                    <h3>{item.content}</h3>
-                    <p>{item.project_tag ?? item.session_id ?? item.id}</p>
-                  </div>
-                  <button
-                    className="danger"
-                    type="button"
-                    onClick={() => {
-                      if (confirm(`Delete observation ${item.id}?`)) {
-                        deleteObservation.mutate(item.id);
-                      }
-                    }}
-                  >
-                    Delete
-                  </button>
-                </article>
-              ))}
-              <div ref={obsSentinelRef} className="infinite-sentinel">
-                {observations.isFetchingNextPage
-                  ? "Loading…"
-                  : observations.hasNextPage
-                    ? "Scroll for more"
-                    : observationsRows.length > 0
-                      ? "End of list"
-                      : null}
-              </div>
-            </div>
-          </section>
-        )}
+        <FilterBar
+          filters={filters}
+          onChange={setFilters}
+          options={filterOptions.data}
+          states={stateOptions}
+        />
 
-        {activeTab === "memories" && (
-          <section className="panel">
-            <div className="panel-head">
-              <strong>
-                {filteredMemories.length} shown / {memoriesRows.length} loaded /{" "}
-                {memoriesTotal} total
-              </strong>
-              <button onClick={() => memories.refetch()} type="button">
-                Refresh
-              </button>
-            </div>
-            <div className="list">
-              {filteredMemories.map((item) => (
-                <article className="row memory-row" key={item.id}>
-                  <div>
-                    <div className="row-meta">
-                      <StatusPill value={item.kind} />
-                      <span>importance {item.importance.toFixed(1)}</span>
-                      <span>updated {formatTime(item.updated_at)}</span>
-                    </div>
-                    <h3>{item.narrative}</h3>
-                    <p>{item.id}</p>
-                  </div>
-                  <div className="actions">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedMemory(item)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="danger"
-                      type="button"
-                      onClick={() => {
-                        if (confirm(`Archive memory ${item.id}?`)) {
-                          archiveMemory.mutate(item.id);
-                        }
-                      }}
-                    >
-                      Archive
-                    </button>
-                  </div>
-                </article>
-              ))}
-              <div ref={memSentinelRef} className="infinite-sentinel">
-                {memories.isFetchingNextPage
-                  ? "Loading…"
-                  : memories.hasNextPage
-                    ? "Scroll for more"
-                    : memoriesRows.length > 0
-                      ? "End of list"
-                      : null}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "decisions" && (
-          <section className="panel">
-            <div className="panel-head">
-              <strong>
-                {filteredDecisions.length} shown / {decisionsRows.length} loaded
-                / {decisionsTotal} total
-              </strong>
-              <button onClick={() => decisions.refetch()} type="button">
-                Refresh
-              </button>
-            </div>
-            <div className="chain">
-              {filteredDecisions.map((item) => (
-                <article className="decision" key={item.id}>
-                  <StatusPill value={item.status} />
-                  <h3>{item.content}</h3>
-                  <p>
-                    {item.supersedes_id
-                      ? `supersedes ${item.supersedes_id}`
-                      : item.id}
-                  </p>
-                </article>
-              ))}
-              <div ref={decSentinelRef} className="infinite-sentinel">
-                {decisions.isFetchingNextPage
-                  ? "Loading…"
-                  : decisions.hasNextPage
-                    ? "Scroll for more"
-                    : decisionsRows.length > 0
-                      ? "End of list"
-                      : null}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "provenance" && (
-          <section className="panel provenance">
-            <div className="panel-head">
-              <strong>
-                {filteredLinks.length} shown / {linksRows.length} loaded /{" "}
-                {linksTotal} total
-              </strong>
-              <button onClick={() => links.refetch()} type="button">
-                Refresh
-              </button>
-            </div>
-            <div className="graph">
-              {filteredLinks.map((item) => (
-                <article
-                  className="edge"
-                  key={`${item.from_id}-${item.to_id}-${item.relation}`}
-                >
-                  <span>{item.from_layer}</span>
-                  <strong>{item.relation}</strong>
-                  <span>{item.to_layer}</span>
-                  <p>
-                    {item.from_id} {"->"} {item.to_id}
-                  </p>
-                </article>
-              ))}
-              <div ref={linksSentinelRef} className="infinite-sentinel">
-                {links.isFetchingNextPage
-                  ? "Loading…"
-                  : links.hasNextPage
-                    ? "Scroll for more"
-                    : linksRows.length > 0
-                      ? "End of list"
-                      : null}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "dreaming" && (
-          <section className="panel">
-            <div className="runner">
-              <select
-                value={dreamJob}
-                onChange={(event) => setDreamJob(event.target.value)}
-              >
-                {jobs.map((job) => (
-                  <option key={job} value={job}>
-                    {job}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => triggerDreaming.mutate(dreamJob)}
-                disabled={triggerDreaming.isPending}
-              >
-                Trigger
-              </button>
-            </div>
-            <div className="panel-head">
-              <strong>
-                {filteredRuns.length} shown / {runsRows.length} loaded /{" "}
-                {runsTotal} total
-              </strong>
-              <button onClick={() => runs.refetch()} type="button">
-                Refresh
-              </button>
-            </div>
-            <div className="runs">
-              {filteredRuns.map((run) => (
-                <article className="run" key={run.id}>
-                  <StatusPill value={run.status} />
-                  <strong>{run.job_kind}</strong>
-                  <span>{formatTime(run.started_at)}</span>
-                  <span>{run.output_count} outputs</span>
-                  {run.error_message && <p>{run.error_message}</p>}
-                </article>
-              ))}
-              <div ref={runsSentinelRef} className="infinite-sentinel">
-                {runs.isFetchingNextPage
-                  ? "Loading…"
-                  : runs.hasNextPage
-                    ? "Scroll for more"
-                    : runsRows.length > 0
-                      ? "End of list"
-                      : null}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "settings" && (
-          <section className="panel settings">
-            <div>
-              <p className="eyebrow">LLM tiers</p>
-              <h3>LOW: summarize / synthesize / time update / reflection</h3>
-              <h3>MID: AUDN / decision contradiction</h3>
-            </div>
-            <div>
-              <p className="eyebrow">Runtime</p>
-              <h3>HTTP MCP endpoint: /mcp</h3>
-              <h3>REST API prefix: /api</h3>
-            </div>
-            <div>
-              <p className="eyebrow">Schedule</p>
-              <h3>Cron display is pending deploy configuration.</h3>
-            </div>
-          </section>
-        )}
-      </section>
-
-      {selectedMemory && (
-        <div className="modal-backdrop">
-          <form
-            className="modal"
-            onSubmit={(event) => {
-              event.preventDefault();
-              updateMemory.mutate(selectedMemory);
+        {activeView === "overview" && <OverviewView filters={filters} />}
+        {activeView === "pipeline" && <PipelineView filters={filters} />}
+        {activeView === "memories" && (
+          <MemoriesView
+            filters={filters}
+            mode={memoryMode}
+            onModeChange={(mode) => {
+              setMemoryMode(mode);
+              setFilters({ ...filters, state: "" });
             }}
-          >
-            <h2>Edit memory</h2>
-            <label>
-              Narrative
-              <textarea
-                value={selectedMemory.narrative}
-                onChange={(event) =>
-                  setSelectedMemory({
-                    ...selectedMemory,
-                    narrative: event.target.value,
-                  })
-                }
-              />
-            </label>
-            <label>
-              Kind
-              <input
-                value={selectedMemory.kind}
-                onChange={(event) =>
-                  setSelectedMemory({
-                    ...selectedMemory,
-                    kind: event.target.value,
-                  })
-                }
-              />
-            </label>
-            <label>
-              Importance
-              <input
-                type="number"
-                min="0"
-                max="10"
-                step="0.5"
-                value={selectedMemory.importance}
-                onChange={(event) =>
-                  setSelectedMemory({
-                    ...selectedMemory,
-                    importance: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <div className="actions">
-              <button type="button" onClick={() => setSelectedMemory(null)}>
-                Cancel
-              </button>
-              <button type="submit" disabled={updateMemory.isPending}>
-                Save
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+          />
+        )}
+        {activeView === "operations" && <OperationsView filters={filters} />}
+      </section>
     </main>
   );
 }
