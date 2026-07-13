@@ -177,6 +177,14 @@ forgetting / transparency / continuity) を判断基準として参照する。
 - 並列 subagent は探索・レビュー・テストなど read-heavy な作業を優先する。複数 agent の同時編集が必要なら担当ファイルを分離し、別 worktree を使う。
 - tsumugi の変更レビューには project-scoped の `tsumugi-code-reviewer` を使う。
 
+## Project workflow
+
+- 変更範囲に応じた検証は `$tsumugi-verify` を使う。
+- Drizzle schema / migrationの生成・適用・修復は `$drizzle-migrate-safety` を使う。
+- runtime、promotion、continuity、retry / quarantine、LLM call、DB volumeのread-only観察は `$tsumugi-runtime-observe` を使う。
+- skillのread-only境界を越えるDB変更、外部LLM呼出し、本番操作は、別作業として明示承認を得る。
+- 変更対象のsubtreeに `AGENTS.md` がある場合は、実装・レビュー前にrootの指示と併せて読む。
+
 ## エージェント向けチェックリスト
 
 新規実装前に：

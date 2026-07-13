@@ -1,0 +1,98 @@
+# Require confirmation for tsumugi commands that can mutate a database, contact
+# a private runtime or external LLM, or start a stateful dreaming/eval workflow.
+
+prefix_rule(
+    pattern = ["pnpm", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    decision = "prompt",
+    justification = "This tsumugi script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    match = [
+        "pnpm db:migrate",
+        "pnpm dream:full",
+        "pnpm bench:promote",
+    ],
+    not_match = [
+        "pnpm typecheck",
+        "pnpm test",
+        "pnpm db:generate",
+    ],
+)
+
+prefix_rule(
+    pattern = ["pnpm", "run", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    decision = "prompt",
+    justification = "This tsumugi script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    match = [
+        "pnpm run db:migrate",
+        "pnpm run llm:smoke",
+    ],
+    not_match = [
+        "pnpm run typecheck",
+        "pnpm run test",
+    ],
+)
+
+prefix_rule(
+    pattern = ["pnpm", ["-C", "--filter"], ["apps/server", "@tsumugi/server"], ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    decision = "prompt",
+    justification = "This tsumugi server script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    match = [
+        "pnpm -C apps/server db:migrate",
+        "pnpm -C apps/server bench:search",
+        "pnpm --filter @tsumugi/server dream:full",
+    ],
+    not_match = [
+        "pnpm -C apps/server typecheck",
+        "pnpm --filter @tsumugi/server test",
+        "pnpm -C apps/server db:generate",
+    ],
+)
+
+prefix_rule(
+    pattern = ["pnpm", ["-C", "--filter"], ["apps/server", "@tsumugi/server"], "run", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    decision = "prompt",
+    justification = "This tsumugi server script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    match = [
+        "pnpm -C apps/server run db:migrate",
+        "pnpm --filter @tsumugi/server run eval:seed",
+    ],
+    not_match = [
+        "pnpm -C apps/server run typecheck",
+    ],
+)
+
+prefix_rule(
+    pattern = ["drizzle-kit", ["migrate", "studio"]],
+    decision = "prompt",
+    justification = "Drizzle migrate/studio can access or mutate the configured database. Confirm that the target is disposable or explicitly authorized.",
+    match = [
+        "drizzle-kit migrate",
+        "drizzle-kit studio",
+    ],
+    not_match = [
+        "drizzle-kit generate",
+    ],
+)
+
+prefix_rule(
+    pattern = ["pnpm", "exec", "drizzle-kit", ["migrate", "studio"]],
+    decision = "prompt",
+    justification = "Drizzle migrate/studio can access or mutate the configured database. Confirm that the target is disposable or explicitly authorized.",
+    match = [
+        "pnpm exec drizzle-kit migrate",
+    ],
+    not_match = [
+        "pnpm exec drizzle-kit generate",
+    ],
+)
+
+prefix_rule(
+    pattern = ["npx", "drizzle-kit", ["migrate", "studio"]],
+    decision = "prompt",
+    justification = "Drizzle migrate/studio can access or mutate the configured database. Confirm that the target is disposable or explicitly authorized.",
+    match = [
+        "npx drizzle-kit migrate",
+    ],
+    not_match = [
+        "npx drizzle-kit generate",
+    ],
+)
