@@ -307,10 +307,10 @@ describe("promoteCaptures", () => {
     });
   });
 
-  it("下流 fact backlog がある間は window を作成・claimしない", async () => {
+  it("下流 fact backlog が上限に達したら window を作成・claimしない", async () => {
     observationPromotionFactRepoMock.countOutstanding.mockResolvedValueOnce(4);
 
-    const result = await promoteCaptures();
+    const result = await promoteCaptures(200, { maxOutstandingFacts: 4 });
 
     expect(capturePromotionWindowRepoMock.create).not.toHaveBeenCalled();
     expect(capturePromotionWindowRepoMock.claim).not.toHaveBeenCalled();
@@ -318,6 +318,32 @@ describe("promoteCaptures", () => {
       stoppedReason: "downstream_backpressure",
       windowsCreated: 0,
       windowsSelected: 0,
+    });
+  });
+
+  it("deferred windowがあってもwindow上限未満なら独立captureをwindow化する", async () => {
+    capturePromotionWindowRepoMock.countOutstanding.mockResolvedValueOnce(1);
+    captureRepoMock.listReady.mockResolvedValueOnce([
+      capture("cap_user", "UserPromptSubmit"),
+      capture("cap_stop", "Stop"),
+    ]);
+
+    const result = await promoteCaptures(200, { maxOutstandingWindows: 2 });
+
+    expect(capturePromotionWindowRepoMock.create).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ windowsCreated: 1 });
+  });
+
+  it("window backlogが上限に達したら独立windowを追加しない", async () => {
+    capturePromotionWindowRepoMock.countOutstanding.mockResolvedValueOnce(2);
+
+    const result = await promoteCaptures(200, { maxOutstandingWindows: 2 });
+
+    expect(captureRepoMock.listReady).not.toHaveBeenCalled();
+    expect(capturePromotionWindowRepoMock.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      stoppedReason: "waiting_for_retry",
+      windowsCreated: 0,
     });
   });
 

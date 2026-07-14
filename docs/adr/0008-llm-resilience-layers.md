@@ -1,7 +1,7 @@
 # ADR-008: LLM resilience を 3 層で構築する
 
 - 日付: 2026-06-14
-- ステータス: Accepted (2026-07-13 改訂)
+- ステータス: Accepted (2026-07-14 改訂)
 
 ## コンテキスト
 
@@ -100,9 +100,17 @@ provider failure を含む run が約 458 秒継続していた。
 - observation の fact 抽出失敗も durable backoff / 5 回 quarantine を持ち、同じ入力を
   scheduler ごとに即再試行しない
 
-promotion は既存 fact queue を先に drain し、fact が retry 待ちなら新しい observation を
-seed しない。capture promotion も downstream fact が残る間は新しい window を作成しない。
-これにより、provider 障害中の queue 増加と item の誤 quarantine を同時に防ぐ。
+promotion は既存 fact queue を先に処理する。provider circuit が open の間は新しいLLM処理を
+開始しない。providerが利用可能でretry待ちitemしかない場合は、outstanding factが上限100未満、
+outstanding windowが上限20未満なら別observation / capture windowを処理する。各上限は既定workerの
+2 run分である。これによりprovider障害中の無制限なqueue増加を防ぎつつ、1件のitem固有backoffによる
+head-of-line blockingを避ける。
+
+2026-07-14 のGLM-5.2本番評価では、outstanding fact 1件だけで15 pending windowsと14 ready
+capturesが停止した。既定worker能力は50 facts / 30分で、1 observationあたり平均2.44 facts
+だったため、zero-backlog gateではなく2 run分のbounded backlogを採用した。またAUDNの
+thinking応答が既定2048 tokensへ到達し、JSON末尾の`reasoning`だけ欠落する事例を6件確認した。
+AUDNは8192 tokensを明示し、`reasoning`は透明性のため必須のまま維持する。
 
 運用上は retry / circuit event metrics、`dreaming_runs.partial`、queue item の
 `attempt_count` / `failure_count` を分けて観測する。

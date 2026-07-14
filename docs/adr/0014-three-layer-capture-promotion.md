@@ -3,7 +3,7 @@
 - 日付: 2026-06-17
 - ステータス: Proposed
 - 実装状況: Phase 1-5 改訂実装済み、本番反映後の Phase 6 評価待ち
-- 最終更新: 2026-07-13
+- 最終更新: 2026-07-14
 - 影響 ADR: ADR-001 (Two-layer → Three-layer に拡張), ADR-003 (dreaming 定義の範囲を明文化),
   ADR-011 (§6 のエスケープバルブ発動、inject-only 原則の適用範囲を Layer 2 以上に限定)
 
@@ -263,11 +263,14 @@ lease / fencing、`failure_count` は item 固有失敗と backoff に使い、p
   capture/window 完了状態を transaction で確定する
 - observation → memory: **fact ごと**に AUDN を適用し、memory mutation、provenance link、
   fact 完了状態を transaction で確定する。全 fact 完了後に observation を完了扱いにする
-- observation promotion は既存 fact を先に drain し、retry 待ち fact があれば新規 observation を
-  seed しない。1 observation を seed した後は、その fact 処理へ戻ってから次へ進む
+- observation promotion は既存のeligible factを先に処理する。retry待ちfactしかない場合も、
+  outstanding factが上限100未満なら新規observationをseedする。1 observationをseedした後は、
+  そのfact処理へ戻ってから次へ進む
 - fact 抽出前の observation 準備失敗は observation 自体に failure count / next attempt / last error を
   永続化し、5 回の item 固有失敗で quarantine する
-- capture promotion は downstream fact が残る間、新規 window の作成・claim を行わない
+- capture promotion はdownstream factが上限100以上なら新規windowの作成・claimを行わない。
+  factが上限未満でもoutstanding windowが上限20以上なら新規window作成を止める。各上限未満では
+  retry待ちitemと独立したwindowを継続し、provider circuit open時はLLM処理前に停止する
 
 これにより、途中失敗後の再実行で同じ範囲を最初から曖昧にやり直すのではなく、未完了の
 window / fact から再開できる。
@@ -320,6 +323,9 @@ WHERE promoted_at IS NOT NULL
 `capture_promotion_windows.input_content` は completed / skipped / quarantined の terminal state
 で消去する。未完了でも capture TTL と同じ 30 日を超えた window は `expired` にして本文を消し、
 window metadata と capture↔observation の識別子 provenance だけを残す。
+quarantined windowを明示的にrestoreする場合は、retention中の紐付きcaptureから同じwindow本文を
+server内で再構成する。windowに記録したcapture件数と全source capture IDをtransaction内で照合し、
+一部でもsweep済みまたは紐付け変更済みならrestore不可としてDB状態を変更しない。
 
 ### 7. search 連動
 

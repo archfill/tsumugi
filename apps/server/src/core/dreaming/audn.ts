@@ -107,6 +107,26 @@ interface LlmJudgement {
   reasoning: string;
 }
 
+const AUDN_MAX_TOKENS = 8192;
+
+function valueType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function describeLlmJudgementShape(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return `top_level=${valueType(value)}`;
+  }
+  const obj = value as Record<string, unknown>;
+  return ["decision", "target_index", "new_narrative", "reasoning"]
+    .map((key) =>
+      Object.hasOwn(obj, key) ? `${key}=${valueType(obj[key])}` : `${key}=missing`,
+    )
+    .join(",");
+}
+
 function isLlmJudgement(v: unknown): v is LlmJudgement {
   if (typeof v !== "object" || v === null) return false;
   const obj = v as Record<string, unknown>;
@@ -172,12 +192,13 @@ Decide which (if any) memory is the target, or whether to add a new one.`;
     system: SYSTEM_PROMPT,
     user: userPrompt,
     jsonResponse: true,
+    maxTokens: AUDN_MAX_TOKENS,
     temperature: 0.0,
   });
 
   if (!isLlmJudgement(raw)) {
     throw new ValidationError(
-      `AUDN LLM returned unexpected JSON shape: ${JSON.stringify(raw)}`,
+      `AUDN LLM returned unexpected JSON shape (${describeLlmJudgementShape(raw)})`,
     );
   }
 

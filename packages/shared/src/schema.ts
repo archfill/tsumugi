@@ -227,6 +227,14 @@ export const AdminOperationIssue = z.object({
 });
 export type AdminOperationIssue = z.infer<typeof AdminOperationIssue>;
 
+export const RetryPromotionIssueInput = z.object({
+  kind: z.enum(["window", "fact", "observation"]),
+  id: z.string().min(1),
+});
+export type RetryPromotionIssueInput = z.infer<
+  typeof RetryPromotionIssueInput
+>;
+
 export const AdminOperationIssuePage = z.object({
   issues: z.array(AdminOperationIssue),
   next_cursor: z.string().nullable(),

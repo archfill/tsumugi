@@ -8,6 +8,10 @@ import { ProviderUnavailableError } from "../../lib/errors.js";
 import { newId } from "../../lib/id.js";
 import { planAudn } from "../dreaming/audn.js";
 import { summarizeObservation } from "./summarize.js";
+import {
+  DEFAULT_MAX_OUTSTANDING_FACTS,
+  isBackpressureActive,
+} from "../promotion/backpressure.js";
 
 export interface PromoteObservationsResult {
   observationsPrepared: number;
@@ -45,11 +49,14 @@ export async function promoteObservations(options?: {
   maxFacts?: number;
   maxRunMs?: number;
   maxFailures?: number;
+  maxOutstandingFacts?: number;
 }): Promise<PromoteObservationsResult> {
   const maxObservations = options?.maxObservations ?? 50;
   const maxFacts = options?.maxFacts ?? 50;
   const maxRunMs = options?.maxRunMs ?? 10 * 60 * 1000;
   const maxFailures = options?.maxFailures ?? 5;
+  const maxOutstandingFacts =
+    options?.maxOutstandingFacts ?? DEFAULT_MAX_OUTSTANDING_FACTS;
   return await withPgAdvisoryLock(
     "tsumugi:promote-observations",
     () =>
@@ -58,6 +65,7 @@ export async function promoteObservations(options?: {
         maxFacts,
         maxRunMs,
         maxFailures,
+        maxOutstandingFacts,
       }),
     async () => ({
       observationsPrepared: 0,
@@ -80,6 +88,7 @@ async function promoteObservationsLocked(options: {
   maxFacts: number;
   maxRunMs: number;
   maxFailures: number;
+  maxOutstandingFacts: number;
 }): Promise<PromoteObservationsResult> {
   const startedAt = Date.now();
   let observationsPrepared = 0;
@@ -109,7 +118,14 @@ async function promoteObservationsLocked(options: {
 
     const [fact] = await observationPromotionFactRepo.listEligible(1);
     if (!fact) {
-      if ((await observationPromotionFactRepo.countOutstanding()) > 0) {
+      const outstandingFacts =
+        await observationPromotionFactRepo.countOutstanding();
+      if (
+        isBackpressureActive(
+          outstandingFacts,
+          options.maxOutstandingFacts,
+        )
+      ) {
         stoppedReason = "waiting_for_retry";
         break;
       }

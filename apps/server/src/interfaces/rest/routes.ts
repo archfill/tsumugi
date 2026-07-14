@@ -5,6 +5,7 @@ import { saveCapture } from "../../core/capture/save.js";
 import { getCaptureContinuity } from "../../core/capture/continuity.js";
 import { hybridSearch } from "../../core/search/hybrid.js";
 import { resolveSearchFilter } from "../../core/search/resolve-filter.js";
+import { retryPromotionIssue } from "../../core/promotion/retry.js";
 import { decisionRepo } from "../../data/repos/decision.js";
 import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
 import { linkRepo } from "../../data/repos/link.js";
@@ -263,4 +264,18 @@ restApp.get("/admin/operations/issues", async (c) => {
   const parsed = readAdminScope(c.req.query());
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   return c.json(await adminRepo.listOperationIssues(parsed.scope));
+});
+
+restApp.post("/admin/operations/issues/:kind/:id/retry", async (c) => {
+  try {
+    return c.json(
+      await retryPromotionIssue({
+        kind: c.req.param("kind"),
+        id: c.req.param("id"),
+      }),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: message }, 400);
+  }
 });

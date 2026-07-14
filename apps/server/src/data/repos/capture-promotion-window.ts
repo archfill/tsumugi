@@ -28,6 +28,15 @@ export type CapturePromotionWindowRow =
 const WINDOW_QUARANTINE_THRESHOLD = 5;
 
 export const capturePromotionWindowRepo = {
+  async findById(id: string): Promise<CapturePromotionWindowRow | null> {
+    const rows = await db
+      .select()
+      .from(capturePromotionWindows)
+      .where(eq(capturePromotionWindows.id, id))
+      .limit(1);
+    return rows[0] ?? null;
+  },
+
   async create(
     row: NewCapturePromotionWindow,
     captureIds: string[],

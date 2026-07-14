@@ -9,6 +9,11 @@ import { ProviderUnavailableError } from "../../lib/errors.js";
 import { newId } from "../../lib/id.js";
 import { summarizeObservation } from "../observation/summarize.js";
 import { buildCaptureWindows } from "./window.js";
+import {
+  DEFAULT_MAX_OUTSTANDING_FACTS,
+  DEFAULT_MAX_OUTSTANDING_WINDOWS,
+  isBackpressureActive,
+} from "../promotion/backpressure.js";
 
 export type PromoteCapturesStoppedReason =
   | "completed"
@@ -82,6 +87,8 @@ export async function promoteCaptures(
     maxWindows?: number;
     maxRunMs?: number;
     maxFailures?: number;
+    maxOutstandingFacts?: number;
+    maxOutstandingWindows?: number;
   },
 ): Promise<PromoteCapturesResult> {
   return await withPgAdvisoryLock(
@@ -91,6 +98,10 @@ export async function promoteCaptures(
         maxWindows: options?.maxWindows ?? 10,
         maxRunMs: options?.maxRunMs ?? 10 * 60 * 1000,
         maxFailures: options?.maxFailures ?? 5,
+        maxOutstandingFacts:
+          options?.maxOutstandingFacts ?? DEFAULT_MAX_OUTSTANDING_FACTS,
+        maxOutstandingWindows:
+          options?.maxOutstandingWindows ?? DEFAULT_MAX_OUTSTANDING_WINDOWS,
       }),
     async () => ({
       capturesSelected: 0,
@@ -110,7 +121,13 @@ export async function promoteCaptures(
 
 async function promoteCapturesLocked(
   maxCaptures: number,
-  options: { maxWindows: number; maxRunMs: number; maxFailures: number },
+  options: {
+    maxWindows: number;
+    maxRunMs: number;
+    maxFailures: number;
+    maxOutstandingFacts: number;
+    maxOutstandingWindows: number;
+  },
 ): Promise<PromoteCapturesResult> {
   const startedAt = Date.now();
   let ready: Awaited<ReturnType<typeof captureRepo.listReady>> = [];
@@ -135,14 +152,28 @@ async function promoteCapturesLocked(
       break;
     }
 
-    if ((await observationPromotionFactRepo.countOutstanding()) > 0) {
+    const outstandingFacts =
+      await observationPromotionFactRepo.countOutstanding();
+    if (
+      isBackpressureActive(
+        outstandingFacts,
+        options.maxOutstandingFacts,
+      )
+    ) {
       stoppedReason = "downstream_backpressure";
       break;
     }
 
     const [window] = await capturePromotionWindowRepo.listEligible(1);
     if (!window) {
-      if ((await capturePromotionWindowRepo.countOutstanding()) > 0) {
+      const outstandingWindows =
+        await capturePromotionWindowRepo.countOutstanding();
+      if (
+        isBackpressureActive(
+          outstandingWindows,
+          options.maxOutstandingWindows,
+        )
+      ) {
         stoppedReason = "waiting_for_retry";
         break;
       }

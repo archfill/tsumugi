@@ -186,10 +186,33 @@ describe("promoteObservations durable fact retry", () => {
     expect(observationPromotionFactRepoMock.seed).not.toHaveBeenCalled();
   });
 
-  it("未完了 fact が retry 待ちなら observation を追加で seed しない", async () => {
+  it("retry 待ち fact が上限未満なら次の observation を処理する", async () => {
+    observationPromotionFactRepoMock.countOutstanding.mockResolvedValueOnce(2);
+    observationRepoMock.listPending.mockResolvedValueOnce([
+      observation("obs_2"),
+    ]);
+    summarizeObservationMock.mockResolvedValueOnce({
+      skip: true,
+      facts: [],
+      reasoning: "noise",
+    });
+
+    const result = await promoteObservations({ maxOutstandingFacts: 3 });
+
+    expect(observationRepoMock.listPending).toHaveBeenCalled();
+    expect(observationPromotionFactRepoMock.seed).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      stoppedReason: "completed",
+      factsSelected: 0,
+      observationsPrepared: 0,
+      observationsSkipped: 1,
+    });
+  });
+
+  it("retry 待ち fact が上限に達したら observation を追加で seed しない", async () => {
     observationPromotionFactRepoMock.countOutstanding.mockResolvedValueOnce(3);
 
-    const result = await promoteObservations();
+    const result = await promoteObservations({ maxOutstandingFacts: 3 });
 
     expect(observationRepoMock.listPending).not.toHaveBeenCalled();
     expect(observationPromotionFactRepoMock.seed).not.toHaveBeenCalled();

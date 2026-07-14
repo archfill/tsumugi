@@ -1080,6 +1080,8 @@ time,
 
 .issue-list article > footer {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
 }
 
@@ -1088,6 +1090,17 @@ time,
   color: var(--muted);
   background: var(--paper-muted);
   font-size: 8px;
+}
+
+.issue-retry {
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0 9px;
+  border-color: var(--thread);
+  color: #25463d;
+  background: #e5ecdc;
+  font-size: 9px;
+  font-weight: 800;
 }
 
 .issue-list pre {

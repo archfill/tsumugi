@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import type {
   AdminFilterOptions,
+  AdminOperationIssue,
   AdminOperationIssuePage,
   AdminOverview,
   AdminPipelineTrace,
@@ -832,6 +833,7 @@ function MemoriesView({
 }
 
 function OperationsView({ filters }: { filters: Filters }) {
+  const queryClient = useQueryClient();
   const issues = useInfiniteQuery({
     queryKey: ["operation-issues", filters],
     initialPageParam: undefined as string | undefined,
@@ -853,6 +855,20 @@ function OperationsView({ filters }: { filters: Filters }) {
     queryKey: ["scheduler"],
     queryFn: () => api<SchedulerResponse>("/scheduler"),
   });
+  const retryIssue = useMutation({
+    mutationFn: (issue: AdminOperationIssue) =>
+      api<{ ok: true }>(
+        `/admin/operations/issues/${encodeURIComponent(issue.kind)}/${encodeURIComponent(issue.id)}/retry`,
+        { method: "POST" },
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["operation-issues"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-overview"] }),
+        queryClient.invalidateQueries({ queryKey: ["pipeline-traces"] }),
+      ]);
+    },
+  });
   const issueRows = issues.data?.pages.flatMap((page) => page.issues) ?? [];
 
   return (
@@ -869,25 +885,59 @@ function OperationsView({ filters }: { filters: Filters }) {
         </header>
         {issues.isLoading && <LoadingPanel />}
         {issues.error && <ErrorPanel error={issues.error} />}
+        {retryIssue.error && <ErrorPanel error={retryIssue.error} />}
         <div className="issue-list">
-          {issueRows.map((issue) => (
-            <article key={`${issue.kind}-${issue.id}`}>
-              <header>
-                <span>{issue.kind}</span>
-                <StatePill state={issue.state} />
-                <time>{formatTime(issue.occurred_at)}</time>
-              </header>
-              <code>{issue.id}</code>
-              {issue.summary && <p>{issue.summary}</p>}
-              <footer>
-                <span>{issue.project_tag ?? "unscoped"}</span>
-                <span>{issue.source ?? "system"}</span>
-                {issue.attempt_count > 0 && <span>attempt {issue.attempt_count}</span>}
-                {issue.failure_count > 0 && <span>failure {issue.failure_count}</span>}
-              </footer>
-              {issue.last_error && <pre>{issue.last_error}</pre>}
-            </article>
-          ))}
+          {issueRows.map((issue) => {
+            const retryable =
+              ["window", "fact", "observation"].includes(issue.kind) &&
+              ["deferred", "quarantined"].includes(issue.state);
+            const retrying =
+              retryIssue.isPending && retryIssue.variables?.id === issue.id;
+            return (
+              <article key={`${issue.kind}-${issue.id}`}>
+                <header>
+                  <span>{issue.kind}</span>
+                  <StatePill state={issue.state} />
+                  <time>{formatTime(issue.occurred_at)}</time>
+                </header>
+                <code>{issue.id}</code>
+                {issue.summary && <p>{issue.summary}</p>}
+                <footer>
+                  <span>{issue.project_tag ?? "unscoped"}</span>
+                  <span>{issue.source ?? "system"}</span>
+                  {issue.attempt_count > 0 && (
+                    <span>attempt {issue.attempt_count}</span>
+                  )}
+                  {issue.failure_count > 0 && (
+                    <span>failure {issue.failure_count}</span>
+                  )}
+                  {retryable && (
+                    <button
+                      type="button"
+                      className="issue-retry"
+                      disabled={retrying}
+                      onClick={() => {
+                        const action =
+                          issue.state === "quarantined"
+                            ? "Restore and retry"
+                            : "Retry now";
+                        if (confirm(`${action} ${issue.kind} ${issue.id}?`)) {
+                          retryIssue.mutate(issue);
+                        }
+                      }}
+                    >
+                      {retrying
+                        ? "Retrying..."
+                        : issue.state === "quarantined"
+                          ? "Restore and retry"
+                          : "Retry now"}
+                    </button>
+                  )}
+                </footer>
+                {issue.last_error && <pre>{issue.last_error}</pre>}
+              </article>
+            );
+          })}
           {!issues.isLoading && issueRows.length === 0 && (
             <div className="message">No operational issues in this scope.</div>
           )}
@@ -1023,8 +1073,8 @@ export default function App() {
         <div className="sidebar-status">
           <span className={filterOptions.isError ? "status-dot error" : "status-dot"} />
           <div>
-            <b>{filterOptions.isError ? "API unavailable" : "Read-only scope active"}</b>
-            <small>new operations remain disabled</small>
+            <b>{filterOptions.isError ? "API unavailable" : "Operational scope active"}</b>
+            <small>recovery actions require confirmation</small>
           </div>
         </div>
       </aside>

@@ -38,6 +38,7 @@ const dreamingRunRepoMock = vi.hoisted(() => ({
 }));
 
 const getActiveSchedulerMock = vi.hoisted(() => vi.fn());
+const retryPromotionIssueMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../src/data/repos/admin.js", () => ({
   adminRepo: adminRepoMock,
@@ -71,6 +72,9 @@ vi.mock("../../src/core/search/hybrid.js", () => ({ hybridSearch: vi.fn() }));
 vi.mock("../../src/core/search/resolve-filter.js", () => ({
   resolveSearchFilter: vi.fn(),
 }));
+vi.mock("../../src/core/promotion/retry.js", () => ({
+  retryPromotionIssue: retryPromotionIssueMock,
+}));
 
 const { restApp } = await import("../../src/interfaces/rest/routes.js");
 
@@ -100,6 +104,11 @@ describe("Admin REST read contract", () => {
     });
     getActiveSchedulerMock.mockReturnValue({
       jobs: [{ job: "promote-captures", cronExpr: "0,30 * * * *" }],
+    });
+    retryPromotionIssueMock.mockResolvedValue({
+      ok: true,
+      kind: "fact",
+      id: "fact_1",
     });
   });
 
@@ -198,6 +207,19 @@ describe("Admin REST read contract", () => {
           failure_count: 2,
         },
       ],
+    });
+  });
+
+  it("operation issueを明示的にretryする", async () => {
+    const response = await restApp.request(
+      "/admin/operations/issues/fact/fact_1/retry",
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(retryPromotionIssueMock).toHaveBeenCalledWith({
+      kind: "fact",
+      id: "fact_1",
     });
   });
 });
