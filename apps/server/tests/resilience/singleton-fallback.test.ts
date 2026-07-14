@@ -14,6 +14,10 @@ const singletonState = vi.hoisted(() => ({
   },
   config: undefined as Config | undefined,
 }));
+const loggerMock = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+}));
 
 vi.mock("../../src/lib/config.js", () => ({
   loadConfig: () => singletonState.config,
@@ -28,6 +32,8 @@ vi.mock("../../src/external/llm/openai-compat.js", () => ({
   createOpenAiCompatClient: (opts: LlmModelConfig) =>
     opts.apiKey.includes("fallback") ? singletonState.fallback : singletonState.primary,
 }));
+
+vi.mock("../../src/lib/logger.js", () => ({ logger: loggerMock }));
 
 const request = { system: "system", user: "user" };
 
@@ -82,6 +88,8 @@ describe("LLM singleton fallback", () => {
       client.complete.mockReset();
       client.completeJson.mockReset();
     }
+    loggerMock.info.mockReset();
+    loggerMock.warn.mockReset();
   });
 
   afterEach(() => {
@@ -209,6 +217,44 @@ describe("LLM singleton fallback", () => {
     vi.mocked(Date.now).mockReturnValue(now + 5 * 60 * 1000);
     await expect(client.complete(request)).resolves.toEqual({ text: "recovered" });
     expect(() => assertLlmAvailable("low")).not.toThrow();
+    expect(singletonState.primary.complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the circuit open for a provider Retry-After longer than the default cooldown", async () => {
+    singletonState.config!.llm.low.fallback = undefined;
+    const now = new Date("2026-07-13T00:00:00.000Z").getTime();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    singletonState.primary.complete
+      .mockRejectedValueOnce(
+        new ProviderUnavailableError(
+          "provider rate limit",
+          "rate_limit",
+          undefined,
+          10 * 60 * 1000,
+        ),
+      )
+      .mockResolvedValueOnce({ text: "recovered" });
+
+    const { getLlm } = await loadSingleton();
+    const client = getLlm("low");
+
+    await expect(client.complete(request)).rejects.toThrow("provider rate limit");
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        reason: "rate_limit",
+        retryAfterMs: 10 * 60 * 1000,
+        cooldownMs: 10 * 60 * 1000,
+        openUntil: new Date(now + 10 * 60 * 1000).toISOString(),
+      }),
+      "llm provider circuit opened",
+    );
+    vi.mocked(Date.now).mockReturnValue(now + 5 * 60 * 1000);
+    await expect(client.complete(request)).rejects.toThrow(/circuit is open/);
+    expect(singletonState.primary.complete).toHaveBeenCalledTimes(1);
+
+    vi.mocked(Date.now).mockReturnValue(now + 10 * 60 * 1000);
+    await expect(client.complete(request)).resolves.toEqual({ text: "recovered" });
     expect(singletonState.primary.complete).toHaveBeenCalledTimes(2);
   });
 });

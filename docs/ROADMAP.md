@@ -80,6 +80,7 @@ Phase 6 では実 call 数、昇格品質、continuity の有用性、retry/quar
 - 2026-07-14追加改訂: retry待ちitemによる全停止を、上限100 facts / 20 windowsの
   bounded backpressureへ変更
 - 2026-07-14追加改訂: Operationsからwindow / fact / observationを明示的にretry / restore可能にする
+- 2026-07-14追加改訂: 429を通常retryから分離し、`Retry-After`をinline retry / provider circuitへ反映する
 
 追加改訂の根拠:
 

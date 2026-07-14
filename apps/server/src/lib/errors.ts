@@ -26,6 +26,8 @@ export class ProviderUnavailableError extends ExternalError {
     message: string,
     public readonly reason: ProviderFailureReason,
     cause?: unknown,
+    /** Provider-specified minimum delay before another request. */
+    public readonly retryAfterMs?: number,
   ) {
     super(message, cause);
   }

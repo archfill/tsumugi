@@ -35,6 +35,11 @@ const providerCircuits = new Map<
 
 const CIRCUIT_INITIAL_COOLDOWN_MS = 5 * 60 * 1000;
 const CIRCUIT_MAX_COOLDOWN_MS = 30 * 60 * 1000;
+const CIRCUIT_MAX_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+
+function circuitId(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 12);
+}
 
 function providerKey(cfg: LlmModelConfig): string {
   const endpoint =
@@ -85,6 +90,10 @@ async function withProviderAdmission<T>(
       }
       circuit.state = "half_open";
       llmCircuitEventsTotal.inc({ provider, event: "half_open" });
+      logger.info(
+        { provider, circuitId: circuitId(key) },
+        "llm provider circuit half-open",
+      );
     }
 
     try {
@@ -92,23 +101,44 @@ async function withProviderAdmission<T>(
       if (providerCircuits.has(key)) {
         providerCircuits.delete(key);
         llmCircuitEventsTotal.inc({ provider, event: "recovered" });
+        logger.info(
+          { provider, circuitId: circuitId(key) },
+          "llm provider circuit recovered",
+        );
       }
       return result;
     } catch (err) {
       if (err instanceof ProviderUnavailableError) {
         const previous = providerCircuits.get(key);
-        const cooldownMs = Math.min(
+        const adaptiveCooldownMs = Math.min(
           previous
-            ? previous.cooldownMs * 2
+            ? Math.min(previous.cooldownMs, CIRCUIT_MAX_COOLDOWN_MS) * 2
             : CIRCUIT_INITIAL_COOLDOWN_MS,
           CIRCUIT_MAX_COOLDOWN_MS,
         );
+        const providerCooldownMs = Math.min(
+          err.retryAfterMs ?? 0,
+          CIRCUIT_MAX_RETRY_AFTER_MS,
+        );
+        const cooldownMs = Math.max(adaptiveCooldownMs, providerCooldownMs);
+        const openUntil = Date.now() + cooldownMs;
         providerCircuits.set(key, {
           state: "open",
-          openUntil: Date.now() + cooldownMs,
+          openUntil,
           cooldownMs,
         });
         llmCircuitEventsTotal.inc({ provider, event: "opened" });
+        logger.warn(
+          {
+            provider,
+            circuitId: circuitId(key),
+            reason: err.reason,
+            retryAfterMs: err.retryAfterMs,
+            cooldownMs,
+            openUntil: new Date(openUntil).toISOString(),
+          },
+          "llm provider circuit opened",
+        );
       } else if (providerCircuits.has(key)) {
         // A response-level failure still proves that the provider is reachable.
         providerCircuits.delete(key);

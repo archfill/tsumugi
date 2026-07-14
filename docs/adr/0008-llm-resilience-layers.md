@@ -30,7 +30,10 @@ transient/permanent 分類 + exponential backoff retry + per-attempt timeout を
 - error を `TransientLlmError` と `PermanentLlmError` の 2 クラスに分類
   - **transient** (retry 価値あり): 5xx / 429 / network error / empty content with no finish_reason
   - **permanent** (即諦め): content_filter / 4xx (auth, invalid request) / `max_tokens` / refusal
-- backoff は 500ms → 1s → 2s → 4s (max 8s)、±30% jitter
+- 通常の backoff は 500ms → 1s → 2s → 4s (max 8s)、±30% jitter
+- 429 は provider に追加負荷を掛けないよう 5s → 10s → 20s (max 30s) とし、
+  `Retry-After` がより長ければその値を優先する
+- `Retry-After` が30秒を超える場合はworker内で待たずにLayer 4へ渡す
 - per-attempt timeout は `AbortController` で実装 (default 30s)
 - 設定: `LLM_MAX_RETRIES` / `LLM_TIMEOUT_MS`
 - OpenAI 互換 provider は `LLM_LOW_TIMEOUT_MS` / `LLM_MID_TIMEOUT_MS` で
@@ -93,6 +96,8 @@ provider failure を含む run が約 458 秒継続していた。
 - provider endpoint + credential を共有単位とし、tier / job をまたいで状態を共有する
 - provider client の retry budget 消費後に circuit を open する
 - cooldown は 5 分から開始し、再失敗ごとに倍増、最大 30 分とする
+- providerが`Retry-After`を返した場合はその再開時刻を優先する。異常値で無期限停止に
+  ならないようprovider指定値は最大24時間に制限する
 - cooldown 後は half-open の単一 probe だけを許可し、成功時に閉じる
 - durable item の claim 前に preflight し、open 中は `attempt_count` を消費しない
 - provider-wide failure は item の `failure_count` と quarantine 判定に加算しない

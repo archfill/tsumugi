@@ -16,6 +16,12 @@ export interface RetryOptions {
   maxMs?: number;
   /** Decide whether the error is transient. Default: always retry. */
   shouldRetry?: (err: unknown, attempt: number) => boolean;
+  /** Override the computed delay for a specific error/attempt. */
+  getDelayMs?: (
+    err: unknown,
+    attempt: number,
+    defaultDelayMs: number,
+  ) => number;
   /** Called when an attempt fails. Useful for logging. */
   onRetry?: (err: unknown, attempt: number, delayMs: number) => void;
 }
@@ -45,7 +51,12 @@ export async function withRetry<T>(
       }
       const backoff = Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
       const jitter = (Math.random() - 0.5) * backoff * 0.6;
-      const delay = Math.max(0, Math.round(backoff + jitter));
+      const defaultDelay = Math.max(0, Math.round(backoff + jitter));
+      const requestedDelay = opts.getDelayMs?.(err, attempt, defaultDelay);
+      const delay =
+        requestedDelay !== undefined && Number.isFinite(requestedDelay)
+          ? Math.max(0, Math.round(requestedDelay))
+          : defaultDelay;
       opts.onRetry?.(err, attempt, delay);
       await sleep(delay);
     }

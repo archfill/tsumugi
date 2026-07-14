@@ -72,6 +72,32 @@ const PERMANENT_FINISH_REASONS = new Set([
   "length", // max_tokens reached without producing content
 ]);
 
+const RATE_LIMIT_BASE_DELAY_MS = 5_000;
+const RATE_LIMIT_MAX_DELAY_MS = 30_000;
+const MAX_INLINE_RETRY_AFTER_MS = 30_000;
+const MAX_PROVIDER_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  let delayMs: number;
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (
+      !Number.isFinite(seconds) ||
+      seconds >= MAX_PROVIDER_RETRY_AFTER_MS / 1000
+    ) {
+      return MAX_PROVIDER_RETRY_AFTER_MS;
+    }
+    delayMs = seconds * 1000;
+  } else {
+    const retryAt = Date.parse(trimmed);
+    if (!Number.isFinite(retryAt)) return undefined;
+    delayMs = Math.max(0, retryAt - Date.now());
+  }
+  return Math.min(delayMs, MAX_PROVIDER_RETRY_AFTER_MS);
+}
+
 class PermanentLlmError extends ExternalError {}
 
 export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
@@ -136,9 +162,12 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
       const msg = `OpenAI-compat API ${res.status} ${res.statusText}: ${text.slice(0, 300)}`;
       // 4xx (auth, invalid request) = permanent; 5xx / 429 = transient
       if (res.status === 429 || res.status >= 500) {
+        const retryAfterMs = parseRetryAfterMs(res.headers.get("Retry-After"));
         throw new ProviderUnavailableError(
           msg,
           res.status === 429 ? "rate_limit" : "server_error",
+          undefined,
+          retryAfterMs,
         );
       }
       if (res.status === 401 || res.status === 403) {
@@ -187,7 +216,30 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
   async function complete(req: LlmRequest): Promise<LlmResponse> {
     return await withRetry(() => completeOnce(req), {
       maxAttempts,
-      shouldRetry: isRetryableExternalError,
+      shouldRetry: (err) =>
+        isRetryableExternalError(err) &&
+        !(
+          err instanceof ProviderUnavailableError &&
+          err.retryAfterMs !== undefined &&
+          err.retryAfterMs > MAX_INLINE_RETRY_AFTER_MS
+        ),
+      getDelayMs: (err, attempt, defaultDelayMs) => {
+        if (!(err instanceof ProviderUnavailableError)) {
+          return defaultDelayMs;
+        }
+        const rateLimitDelay =
+          err.reason === "rate_limit"
+            ? Math.min(
+                RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+                RATE_LIMIT_MAX_DELAY_MS,
+              )
+            : 0;
+        return Math.max(
+          defaultDelayMs,
+          rateLimitDelay,
+          err.retryAfterMs ?? 0,
+        );
+      },
       onRetry: (err, attempt, delayMs) => {
         const reason =
           err instanceof ProviderUnavailableError ? err.reason : "response";
@@ -200,6 +252,10 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
             attempt,
             maxAttempts,
             delayMs,
+            retryAfterMs:
+              err instanceof ProviderUnavailableError
+                ? err.retryAfterMs
+                : undefined,
             err: err instanceof Error ? err.message : String(err),
           },
           "llm retry",
