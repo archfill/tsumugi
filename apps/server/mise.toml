@@ -118,6 +118,30 @@ run = "pnpm bench"
 description = "Run AUDN decision bench"
 run = "pnpm bench:audn"
 
+[tasks.bench-audn-synthetic]
+description = "Run AUDN decision bench with public synthetic fixtures only"
+run = "pnpm bench:audn-synthetic"
+
+[tasks.bench-audn-private-sample]
+description = "Run AUDN bench with a fixed private sample"
+run = "pnpm bench:audn-private-sample"
+
+[tasks.bench-audn-batch]
+description = "Run experimental batched AUDN decision bench"
+run = "pnpm bench:audn-batch"
+
+[tasks.bench-audn-batch-synthetic]
+description = "Run batched AUDN bench with public synthetic fixtures only"
+run = "pnpm bench:audn-batch-synthetic"
+
+[tasks.bench-audn-batch-private-sample]
+description = "Run batched AUDN bench with a fixed private sample"
+run = "pnpm bench:audn-batch-private-sample"
+
+[tasks.bench-audn-batch2-synthetic]
+description = "Run size-2 AUDN batch bench with public synthetic fixtures only"
+run = "pnpm bench:audn-batch2-synthetic"
+
 [tasks.eval-seed]
 description = "Extract yui DB data into eval/fixtures-private/ (requires YUI_DATABASE_URL)"
 run = "pnpm eval:seed"

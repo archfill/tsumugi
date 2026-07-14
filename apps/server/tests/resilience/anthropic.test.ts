@@ -88,6 +88,22 @@ describe("Anthropic LLM resilience", () => {
     expect(anthropicState.create).toHaveBeenCalledTimes(2);
   });
 
+  it("passes a request timeout override to the SDK", async () => {
+    anthropicState.create.mockResolvedValueOnce(okMessage("ok"));
+    const client = createAnthropicClient({
+      apiKey: "test",
+      model: "claude-test",
+      maxAttempts: 1,
+    });
+
+    await client.complete({ ...baseRequest, timeoutMs: 60_000 });
+
+    expect(anthropicState.create).toHaveBeenCalledWith(
+      expect.any(Object),
+      { timeout: 60_000, maxRetries: 0 },
+    );
+  });
+
   it("retries 5xx APIError", async () => {
     anthropicState.create
       .mockRejectedValueOnce(

@@ -236,7 +236,7 @@ Layer 1 capture (hook は deterministic insert のみ)
 Layer 2 observation (capture 昇格 + agent 直接 save)
   ↓ scheduled stepPromoteObservations
   ↓   ├─ observation facts を fact-level durable work item にする
-  ↓   ├─ 各 fact を AUDN (ADD / UPDATE / DELETE / NOOP) 判定
+  ↓   ├─ 同一 observation の最大 3 facts を 1 call で AUDN 判定
   ↓   └─ memory mutation + provenance link + fact status を transaction 更新
 Layer 3 memory
 ```
@@ -263,6 +263,11 @@ lease / fencing、`failure_count` は item 固有失敗と backoff に使い、p
   capture/window 完了状態を transaction で確定する
 - observation → memory: **fact ごと**に AUDN を適用し、memory mutation、provenance link、
   fact 完了状態を transaction で確定する。全 fact 完了後に observation を完了扱いにする
+- AUDN の judgement だけを同一 observation 内の最大 3 facts で batch 化する。claim、lease、
+  retry / quarantine、memory mutation、provenance、完了判定の単位は fact のまま変えない
+- batch の schema / item error は claim 済み facts を単件 AUDN で再判定する。同じ memory を
+  複数の UPDATE / DELETE が対象にした場合も、同一 snapshot の競合を避けるため単件へ戻す。
+  provider-wide failure は全 claim を quarantine 加算なしで defer して run を停止する
 - observation promotion は既存のeligible factを先に処理する。retry待ちfactしかない場合も、
   outstanding factが上限100未満なら新規observationをseedする。1 observationをseedした後は、
   そのfact処理へ戻ってから次へ進む
@@ -397,8 +402,8 @@ scope に合致しないため scope 外。将来 capture / recall / continuity 
   Drizzle migration が必要。既存 pending は `ready` として durable worker に引き継ぎ、
   AUDN の既存 memory 照合で旧 worker の partial side effect を吸収する
 - **昇格パイプラインのコスト**: window summarize と fact-level AUDN の LLM call が増える。
-  3 completed turns / 12,000 chars の window で capture 単位呼出しを抑えるが、実 call 数と
-  品質の両方を Phase 6 で確認する
+  capture は 3 completed turns / 12,000 chars の window、AUDN は同一 observation の最大
+  3 facts の judgement batch で呼出しを抑えるが、実 call 数と品質の両方を Phase 6 で確認する
 - **Compact capture の重複リスク**: UserPromptSubmit / Stop capture と同じ発話を含み得る。
   緩和策として transcript 全量ではなく compact 境界の tail / compacted record に限定し、
   Layer 2 への昇格判断は dreaming 側に委ねる。
@@ -418,6 +423,15 @@ scope に合致しないため scope 外。将来 capture / recall / continuity 
   実績を計測してから ADR Status を Accepted に上げる
 
 ## 実装フェーズ
+
+### AUDN batch のローカル gate (2026-07-14)
+
+- synthetic の単件 / batch size 3 比較では、非曖昧 case の decision accuracy と target
+  accuracy を維持し、論理 LLM call を 32 → 11 (65.6%減) にした
+- private stable-hash sample 10件では単件 / batch とも 8/10 で誤り対象も同一、論理 LLM
+  call は 10 → 4 (60%減) だった
+- timeout / retry / circuit error は両 batch 評価で 0 件。これはローカル評価であり、
+  本番 call 数・latency・fallback 率・昇格品質は Phase 6 の観察対象に残す
 
 | Phase | 内容                                                                                                                    | 状況                                      |
 | ----- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |

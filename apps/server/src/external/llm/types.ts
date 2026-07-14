@@ -17,6 +17,8 @@ export interface LlmRequest {
   maxTokens?: number; // default 2048
   temperature?: number; // default 0.0
   jsonResponse?: boolean; // default false; true will append JSON enforcement to system prompt
+  /** Per-attempt timeout override. Provider default is used when omitted. */
+  timeoutMs?: number;
 }
 
 export interface LlmResponse {

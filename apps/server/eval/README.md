@@ -26,6 +26,9 @@ eval/
 │   └── *.ts               # seed-from-yui.ts が出力
 ├── runners/               # 各ジョブのベンチ
 │   ├── audn.bench.ts
+│   ├── audn-batch.bench.ts
+│   ├── audn.fixtures.ts
+│   ├── audn.metrics.ts
 │   ├── promote.bench.ts
 │   ├── search.bench.ts
 │   ├── contradiction.bench.ts
@@ -42,6 +45,12 @@ mise run -C apps/server bench
 
 # 個別
 mise run -C apps/server bench-audn
+mise run -C apps/server bench-audn-synthetic
+mise run -C apps/server bench-audn-private-sample
+mise run -C apps/server bench-audn-batch
+mise run -C apps/server bench-audn-batch-synthetic
+mise run -C apps/server bench-audn-batch-private-sample
+mise run -C apps/server bench-audn-batch2-synthetic
 mise run -C apps/server bench-promote
 mise run -C apps/server bench-search
 mise run -C apps/server bench-contradiction
@@ -56,11 +65,22 @@ YUI_DATABASE_URL=postgresql://postgres:***@... mise run -C apps/server eval-seed
 | ベンチ        | 主要メトリクス                                                         |
 | ------------- | ---------------------------------------------------------------------- |
 | AUDN          | confusion matrix, per-class F1 (ADD/UPDATE/DELETE/NOOP)                |
+| AUDN batch    | AUDN指標 + batch size 3での論理LLM call削減率                       |
 | promote       | precision, recall (skip vs keep), 誤判定リスト                         |
 | search        | top-k recall, MRR                                                      |
 | contradiction | precision, recall, 見逃しリスト                                        |
 | time-update   | narrative cosine similarity (BGE-M3 self-eval)                         |
 | resilience    | vitest pass/fail (mock fetch で 5xx/429/empty/content_filter 等を再現) |
+
+`audn-batch` は本番workerと同じbatch judgeの品質gateで、外部LLMの明示的な実行に限定するため
+引数なしの全ベンチには含めない。既存AUDNと同じfixtureをdecisionが混在する3件単位に
+並べ替え、fact間の干渉とcall削減率を測る。
+`*-synthetic` は `fixtures-private` を読み込まず、公開fixtureだけで安全かつ低コストに
+同条件のA/B比較を行う入口とする。
+`audn-batch2-synthetic` はprovider timeoutとのtrade-off確認用にbatch size 2で実行する。
+`*-private-sample` はprivate fixtureをstable hashで存在するdecisionごとに5件抽出し、
+最大20件の同一sampleを単件/batchで比較する。全件を毎回外部LLMへ送らず、固定sampleで
+回帰を追える。
 
 ## fixture 追加方針
 

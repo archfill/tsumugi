@@ -80,6 +80,41 @@ describe("OpenAI-compatible LLM resilience", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("uses a request timeout override instead of the client default", async () => {
+    let signal: AbortSignal | null | undefined;
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((_input, init) => {
+      signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createOpenAiCompatClient({
+      apiKey: "test",
+      model: "test-model",
+      baseUrl: "https://example.test/v1",
+      maxAttempts: 1,
+      timeoutMs: 10_000,
+    });
+    const result = client
+      .complete({ ...baseRequest, timeoutMs: 60_000 })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(50_000);
+
+    const error = await result;
+    expect(error).toBeInstanceOf(ProviderUnavailableError);
+    expect((error as Error).message).toContain("timed out after 60000ms");
+  });
+
   it("sends an enabled GLM reasoning profile when configured", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({

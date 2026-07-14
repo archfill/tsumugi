@@ -73,6 +73,32 @@ export const observationPromotionFactRepo = {
       .limit(limit);
   },
 
+  async listEligibleForObservation(
+    observationId: string,
+    limit = 50,
+  ): Promise<ObservationPromotionFactRow[]> {
+    const now = new Date();
+    return await db
+      .select()
+      .from(observationPromotionFacts)
+      .where(
+        and(
+          eq(observationPromotionFacts.observation_id, observationId),
+          lte(observationPromotionFacts.next_attempt_at, now),
+          or(
+            eq(observationPromotionFacts.status, "pending"),
+            eq(observationPromotionFacts.status, "deferred"),
+            and(
+              eq(observationPromotionFacts.status, "processing"),
+              lte(observationPromotionFacts.lease_expires_at, now),
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(observationPromotionFacts.ordinal))
+      .limit(limit);
+  },
+
   async countOutstanding(): Promise<number> {
     const result = await db.execute<{ count: number }>(sql`
       SELECT COUNT(*)::int AS count

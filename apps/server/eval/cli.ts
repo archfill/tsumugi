@@ -21,6 +21,7 @@ import {
   saveReport,
 } from "./report.js";
 import { runAudnBench } from "./runners/audn.bench.js";
+import { runAudnBatchBench } from "./runners/audn-batch.bench.js";
 import { runContradictionBench } from "./runners/contradiction.bench.js";
 import { runPromoteBench } from "./runners/promote.bench.js";
 import { runSearchBench } from "./runners/search.bench.js";
@@ -32,15 +33,33 @@ const RESULTS_DIR = join(HERE, "results");
 
 const REGISTRY: Record<string, () => Promise<BenchSummary>> = {
   audn: runAudnBench,
+  "audn-synthetic": () => runAudnBench({ includePrivate: false }),
+  "audn-private-sample": () =>
+    runAudnBench({ includeSynthetic: false, privatePerDecision: 5 }),
+  "audn-batch": runAudnBatchBench,
+  "audn-batch-synthetic": () =>
+    runAudnBatchBench({ includePrivate: false }),
+  "audn-batch-private-sample": () =>
+    runAudnBatchBench({ includeSynthetic: false, privatePerDecision: 5 }),
+  "audn-batch2-synthetic": () =>
+    runAudnBatchBench({ includePrivate: false, batchSize: 2 }),
   promote: runPromoteBench,
   search: runSearchBench,
   contradiction: runContradictionBench,
   "time-update": runTimeUpdateBench,
 };
 
+const DEFAULT_BENCHES = [
+  "audn",
+  "promote",
+  "search",
+  "contradiction",
+  "time-update",
+];
+
 async function main() {
   const argv = process.argv.slice(2);
-  const requested = argv.length === 0 ? Object.keys(REGISTRY) : argv;
+  const requested = argv.length === 0 ? DEFAULT_BENCHES : argv;
 
   const unknown = requested.filter((n) => !(n in REGISTRY));
   if (unknown.length > 0) {

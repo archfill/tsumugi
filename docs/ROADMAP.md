@@ -82,6 +82,15 @@ Phase 6 では実 call 数、昇格品質、continuity の有用性、retry/quar
 - 2026-07-14追加改訂: Operationsからwindow / fact / observationを明示的にretry / restore可能にする
 - 2026-07-14追加改訂: 429を通常retryから分離し、`Retry-After`をinline retry / provider circuitへ反映する
 
+### ローカル検証済み・本番反映待ち
+
+- 2026-07-14: observation→memory の AUDN judgement を同一 observation 内の最大3 factsで
+  batch化した。fact単位のclaim / lease / retry / quarantine / transactionは維持し、batch
+  errorまたは同一memoryへの更新競合は単件判定へfallbackする
+- syntheticでは非曖昧caseの精度を維持して論理LLM callを32→11 (65.6%減)、private固定
+  sample 10件では誤り対象を増やさず10→4 (60%減)。本番でcall数、latency、fallback率、
+  provider timeout、昇格品質を継続観察する
+
 追加改訂の根拠:
 
 - GLM-5.2 MIDは640 success / 18 error。shape error 6件はすべてJSON末尾の`reasoning`欠落だった

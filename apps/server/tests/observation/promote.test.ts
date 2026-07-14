@@ -11,6 +11,7 @@ const observationRepoMock = vi.hoisted(() => ({
 const observationPromotionFactRepoMock = vi.hoisted(() => ({
   seed: vi.fn(),
   listEligible: vi.fn(),
+  listEligibleForObservation: vi.fn(),
   countOutstanding: vi.fn(),
   claim: vi.fn(),
   apply: vi.fn(),
@@ -22,9 +23,11 @@ const embedderMock = vi.hoisted(() => ({
 }));
 
 const planAudnMock = vi.hoisted(() => vi.fn());
+const planAudnBatchMock = vi.hoisted(() => vi.fn());
 const summarizeObservationMock = vi.hoisted(() => vi.fn());
 const withPgAdvisoryLockMock = vi.hoisted(() => vi.fn());
 const assertLlmAvailableMock = vi.hoisted(() => vi.fn());
+const loggerMock = vi.hoisted(() => ({ warn: vi.fn() }));
 
 vi.mock("../../src/data/repos/observation.js", () => ({
   observationRepo: observationRepoMock,
@@ -44,7 +47,10 @@ vi.mock("../../src/external/llm/singleton.js", () => ({
 
 vi.mock("../../src/core/dreaming/audn.js", () => ({
   planAudn: planAudnMock,
+  planAudnBatch: planAudnBatchMock,
 }));
+
+vi.mock("../../src/lib/logger.js", () => ({ logger: loggerMock }));
 
 vi.mock("../../src/core/observation/summarize.js", () => ({
   summarizeObservation: summarizeObservationMock,
@@ -58,13 +64,22 @@ const { promoteObservations } = await import(
   "../../src/core/observation/promote.js"
 );
 
-function fact(status: "pending" | "deferred", attemptCount: number) {
+function fact(
+  status: "pending" | "deferred",
+  attemptCount: number,
+  id = "fact_1",
+  observationId = "obs_1",
+  ordinal = 0,
+) {
   return {
-    id: "fact_1",
-    observation_id: "obs_1",
-    fact_hash: "hash_fact_1",
-    fact: "Promotion retries durable fact rows.",
-    ordinal: 0,
+    id,
+    observation_id: observationId,
+    fact_hash: `hash_${id}`,
+    fact:
+      id === "fact_1"
+        ? "Promotion retries durable fact rows."
+        : `Durable fact ${id}.`,
+    ordinal,
     status,
     attempt_count: attemptCount,
     failure_count: status === "deferred" ? 1 : 0,
@@ -113,6 +128,9 @@ describe("promoteObservations durable fact retry", () => {
     });
     observationPromotionFactRepoMock.seed.mockResolvedValue(undefined);
     observationPromotionFactRepoMock.listEligible.mockResolvedValue([]);
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValue(
+      [],
+    );
     observationPromotionFactRepoMock.countOutstanding.mockResolvedValue(0);
     observationPromotionFactRepoMock.claim.mockResolvedValue(null);
     observationPromotionFactRepoMock.apply.mockResolvedValue(undefined);
@@ -133,6 +151,9 @@ describe("promoteObservations durable fact retry", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([deferred])
       .mockResolvedValueOnce([]);
+    observationPromotionFactRepoMock.listEligibleForObservation
+      .mockResolvedValueOnce([pending])
+      .mockResolvedValueOnce([deferred]);
     observationPromotionFactRepoMock.claim
       .mockResolvedValueOnce(firstClaim)
       .mockResolvedValueOnce(secondClaim);
@@ -229,6 +250,9 @@ describe("promoteObservations durable fact retry", () => {
     observationPromotionFactRepoMock.listEligible.mockResolvedValueOnce([
       pending,
     ]);
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValueOnce([
+      pending,
+    ]);
     observationPromotionFactRepoMock.claim.mockResolvedValueOnce(claimed);
     planAudnMock.mockRejectedValueOnce(
       new ProviderUnavailableError("provider timeout", "timeout"),
@@ -259,6 +283,9 @@ describe("promoteObservations durable fact retry", () => {
     observationPromotionFactRepoMock.listEligible
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([pendingFact]);
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValueOnce([
+      pendingFact,
+    ]);
     observationPromotionFactRepoMock.claim.mockResolvedValueOnce(claimed);
     summarizeObservationMock.mockResolvedValueOnce({
       skip: false,
@@ -316,6 +343,207 @@ describe("promoteObservations durable fact retry", () => {
       observationsDeferred: 1,
       observationsQuarantined: 0,
       errors: ["prepare(obs=obs_1): malformed summary"],
+    });
+  });
+
+  it("同じ observation の fact 3件を1回の AUDN batch で判定して個別適用する", async () => {
+    const pendingFacts = [
+      fact("pending", 0, "fact_1", "obs_1", 0),
+      fact("pending", 0, "fact_2", "obs_1", 1),
+      fact("pending", 0, "fact_3", "obs_1", 2),
+    ];
+    const claimedFacts = pendingFacts.map(claimedFact);
+    observationPromotionFactRepoMock.listEligible.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.claim
+      .mockResolvedValueOnce(claimedFacts[0])
+      .mockResolvedValueOnce(claimedFacts[1])
+      .mockResolvedValueOnce(claimedFacts[2]);
+    planAudnBatchMock.mockResolvedValueOnce(
+      claimedFacts.map((claimed) => ({
+        factId: claimed.id,
+        plan: { decision: "NOOP", reasoning: "already represented" },
+      })),
+    );
+
+    const result = await promoteObservations({ maxFacts: 3 });
+
+    expect(planAudnBatchMock).toHaveBeenCalledTimes(1);
+    expect(planAudnBatchMock).toHaveBeenCalledWith(
+      claimedFacts.map((claimed) => ({
+        factId: claimed.id,
+        newFact: claimed.fact,
+      })),
+    );
+    expect(planAudnMock).not.toHaveBeenCalled();
+    expect(observationPromotionFactRepoMock.apply).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({
+      factsSelected: 3,
+      factBatchesSelected: 1,
+      factBatchFallbacks: 0,
+      factsCompleted: 3,
+      errors: [],
+    });
+  });
+
+  it("AUDN batch の provider 障害で全 claim を quarantine 加算なしで defer する", async () => {
+    const pendingFacts = [
+      fact("pending", 0, "fact_1", "obs_1", 0),
+      fact("pending", 0, "fact_2", "obs_1", 1),
+      fact("pending", 0, "fact_3", "obs_1", 2),
+    ];
+    const claimedFacts = pendingFacts.map(claimedFact);
+    observationPromotionFactRepoMock.listEligible.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.claim
+      .mockResolvedValueOnce(claimedFacts[0])
+      .mockResolvedValueOnce(claimedFacts[1])
+      .mockResolvedValueOnce(claimedFacts[2]);
+    planAudnBatchMock.mockRejectedValueOnce(
+      new ProviderUnavailableError("provider timeout", "timeout"),
+    );
+
+    const result = await promoteObservations({ maxFacts: 3 });
+
+    expect(observationPromotionFactRepoMock.recordFailure).toHaveBeenCalledTimes(
+      3,
+    );
+    for (const claimed of claimedFacts) {
+      expect(
+        observationPromotionFactRepoMock.recordFailure,
+      ).toHaveBeenCalledWith(claimed, "provider timeout", {
+        countsTowardQuarantine: false,
+      });
+    }
+    expect(planAudnMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      stoppedReason: "provider_cooldown",
+      factBatchesSelected: 1,
+      factBatchFallbacks: 0,
+      factsDeferred: 3,
+      factsQuarantined: 0,
+    });
+  });
+
+  it("AUDN batch の item error は単件判定へ fallback して処理を完了する", async () => {
+    const pendingFacts = [
+      fact("pending", 0, "fact_1", "obs_1", 0),
+      fact("pending", 0, "fact_2", "obs_1", 1),
+      fact("pending", 0, "fact_3", "obs_1", 2),
+    ];
+    const claimedFacts = pendingFacts.map(claimedFact);
+    observationPromotionFactRepoMock.listEligible.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.claim
+      .mockResolvedValueOnce(claimedFacts[0])
+      .mockResolvedValueOnce(claimedFacts[1])
+      .mockResolvedValueOnce(claimedFacts[2]);
+    planAudnBatchMock.mockRejectedValueOnce(new Error("malformed batch"));
+    planAudnMock.mockResolvedValue({
+      decision: "NOOP",
+      reasoning: "already represented",
+    });
+
+    const result = await promoteObservations({ maxFacts: 3 });
+
+    expect(planAudnMock).toHaveBeenCalledTimes(3);
+    expect(observationPromotionFactRepoMock.apply).toHaveBeenCalledTimes(3);
+    expect(
+      observationPromotionFactRepoMock.recordFailure,
+    ).not.toHaveBeenCalled();
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      factBatchesSelected: 1,
+      factBatchFallbacks: 1,
+      factsCompleted: 3,
+      factsDeferred: 0,
+      errors: [],
+    });
+  });
+
+  it("AUDN batch が同じ memory を複数更新する場合は単件で再判定する", async () => {
+    const pendingFacts = [
+      fact("pending", 0, "fact_1", "obs_1", 0),
+      fact("pending", 0, "fact_2", "obs_1", 1),
+    ];
+    const claimedFacts = pendingFacts.map(claimedFact);
+    observationPromotionFactRepoMock.listEligible.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValueOnce(
+      pendingFacts,
+    );
+    observationPromotionFactRepoMock.claim
+      .mockResolvedValueOnce(claimedFacts[0])
+      .mockResolvedValueOnce(claimedFacts[1]);
+    planAudnBatchMock.mockResolvedValueOnce(
+      claimedFacts.map((claimed) => ({
+        factId: claimed.id,
+        plan: {
+          decision: "UPDATE",
+          targetMemoryId: "mem_shared",
+          narrative: claimed.fact,
+          reasoning: "same target",
+        },
+      })),
+    );
+    planAudnMock.mockResolvedValue({
+      decision: "NOOP",
+      reasoning: "represented after sequential replan",
+    });
+
+    const result = await promoteObservations({ maxFacts: 2 });
+
+    expect(planAudnBatchMock).toHaveBeenCalledTimes(1);
+    expect(planAudnMock).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      factBatchesSelected: 1,
+      factBatchFallbacks: 1,
+      factsCompleted: 2,
+      errors: [],
+    });
+  });
+
+  it("異なる observation の fact を同じ AUDN batch に含めない", async () => {
+    const first = fact("pending", 0, "fact_1", "obs_1", 0);
+    const second = fact("pending", 0, "fact_2", "obs_2", 0);
+    observationPromotionFactRepoMock.listEligible.mockResolvedValueOnce([
+      first,
+      second,
+    ]);
+    observationPromotionFactRepoMock.listEligibleForObservation.mockResolvedValueOnce([
+      first,
+    ]);
+    observationPromotionFactRepoMock.claim.mockResolvedValueOnce(
+      claimedFact(first),
+    );
+    planAudnMock.mockResolvedValueOnce({
+      decision: "NOOP",
+      reasoning: "already represented",
+    });
+
+    const result = await promoteObservations({ maxFacts: 1 });
+
+    expect(planAudnBatchMock).not.toHaveBeenCalled();
+    expect(observationPromotionFactRepoMock.claim).not.toHaveBeenCalledWith(
+      second.id,
+    );
+    expect(result).toMatchObject({
+      factsSelected: 1,
+      factBatchesSelected: 0,
+      factsCompleted: 1,
     });
   });
 });

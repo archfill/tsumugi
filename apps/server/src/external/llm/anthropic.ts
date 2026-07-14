@@ -57,15 +57,24 @@ export function createAnthropicClient(opts: {
 
   async function completeOnce(req: LlmRequest): Promise<LlmResponse> {
     try {
-      const res = await client.messages.create({
-        model: opts.model,
-        max_tokens: req.maxTokens ?? 2048,
-        temperature: req.temperature ?? 0.0,
-        system: req.jsonResponse
-          ? req.system + "\n\nReturn ONLY valid JSON, no other text."
-          : req.system,
-        messages: [{ role: "user", content: req.user }],
-      });
+      const res = await client.messages.create(
+        {
+          model: opts.model,
+          max_tokens: req.maxTokens ?? 2048,
+          temperature: req.temperature ?? 0.0,
+          system: req.jsonResponse
+            ? req.system + "\n\nReturn ONLY valid JSON, no other text."
+            : req.system,
+          messages: [{ role: "user", content: req.user }],
+        },
+        req.timeoutMs === undefined
+          ? undefined
+          : {
+              timeout: req.timeoutMs,
+              // Keep the request budget under tsumugi's outer retry control.
+              maxRetries: 0,
+            },
+      );
 
       // stop_reason classification
       // - end_turn / stop_sequence: normal

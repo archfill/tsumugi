@@ -46,6 +46,21 @@ export interface AudnPlan {
   reasoning: string;
 }
 
+export interface AudnPlanBatchInput {
+  factId: string;
+  newFact: string;
+  topK?: number;
+}
+
+export interface AudnPlanBatchResult {
+  factId: string;
+  plan: AudnPlan;
+}
+
+type ExistingMemory = NonNullable<
+  Awaited<ReturnType<typeof memoryRepo.findById>>
+>;
+
 // ---------------------------------------------------------------------------
 // LLM prompt
 // ---------------------------------------------------------------------------
@@ -92,6 +107,50 @@ session.
   "reasoning": string
 }`;
 
+const BATCH_SYSTEM_PROMPT = `You are the AUDN (ADD/UPDATE/DELETE/NOOP) judge for the memory layer.
+Evaluate each fact independently against only its own indexed candidate memories.
+Do not let facts or candidates from one item influence another item.
+
+## Decision criteria
+- ADD: the fact is independent new information. Its subject differs from every
+  candidate memory for that item.
+- UPDATE: the subject matches a candidate memory but its content has changed.
+- DELETE: the fact retracts or negates a candidate memory.
+- NOOP: an equivalent fact already exists; there is no new information.
+
+## Subject-continuity examples
+- "Adopt OAuth" + "Switch from OAuth 2.0 to SAML"  -> UPDATE (subject = auth method)
+- "DB is MySQL" + "MySQL adoption is withdrawn"     -> DELETE (subject = DB choice)
+- "Embedding dim = 1024" + "Adopt BGE-M3"           -> ADD    (subjects independent)
+- "Auth uses OAuth" + "OAuth is the auth method"    -> NOOP   (equivalent)
+
+## Output language
+Write new_narrative and reasoning in the same natural language as each fact.
+Preserve code symbols / identifiers / English product names verbatim.
+
+## new_narrative density (ADD / UPDATE)
+new_narrative must remain self-contained: preserve when / where / why context
+(date, project, subsystem, metric, identifier) that the input fact carried.
+Compression is fine; context erosion is not.
+
+For UPDATE and DELETE, target_index must be the index of a candidate belonging
+to that same fact.
+
+Return exactly one judgement for every supplied fact_id and no others.
+
+## Output JSON
+{
+  "judgements": [
+    {
+      "fact_id": string,
+      "decision": "ADD" | "UPDATE" | "DELETE" | "NOOP",
+      "target_index": number | null,
+      "new_narrative": string | null,
+      "reasoning": string
+    }
+  ]
+}`;
+
 // ---------------------------------------------------------------------------
 // Internal LLM response shape
 // ---------------------------------------------------------------------------
@@ -107,7 +166,16 @@ interface LlmJudgement {
   reasoning: string;
 }
 
+interface LlmBatchJudgement extends LlmJudgement {
+  fact_id: string;
+}
+
+interface LlmBatchResponse {
+  judgements: LlmBatchJudgement[];
+}
+
 const AUDN_MAX_TOKENS = 8192;
+const AUDN_BATCH_TIMEOUT_MS = 60_000;
 
 function valueType(value: unknown): string {
   if (value === null) return "null";
@@ -139,6 +207,71 @@ function isLlmJudgement(v: unknown): v is LlmJudgement {
   );
 }
 
+function describeLlmBatchShape(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return `top_level=${valueType(value)}`;
+  }
+  const judgements = (value as Record<string, unknown>)["judgements"];
+  if (!Array.isArray(judgements)) {
+    return `judgements=${valueType(judgements)}`;
+  }
+  const itemShapes = judgements.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return valueType(item);
+    }
+    const obj = item as Record<string, unknown>;
+    return [
+      "fact_id",
+      "decision",
+      "target_index",
+      "new_narrative",
+      "reasoning",
+    ]
+      .map((key) =>
+        Object.hasOwn(obj, key)
+          ? `${key}=${valueType(obj[key])}`
+          : `${key}=missing`,
+      )
+      .join(",");
+  });
+  return `judgements=array(length=${judgements.length},items=[${itemShapes.join("|")}])`;
+}
+
+function parseLlmBatchResponse(value: unknown): LlmBatchResponse | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const judgements = (value as Record<string, unknown>)["judgements"];
+  if (!Array.isArray(judgements)) return null;
+
+  const normalized: LlmBatchJudgement[] = [];
+  for (const item of judgements) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return null;
+    }
+    const obj = item as Record<string, unknown>;
+    const judgement = {
+      fact_id: obj["fact_id"],
+      decision: obj["decision"],
+      target_index: obj["target_index"] ?? null,
+      new_narrative: obj["new_narrative"] ?? null,
+      reasoning: obj["reasoning"],
+    };
+    if (
+      typeof judgement.fact_id !== "string" ||
+      !isLlmJudgement(judgement)
+    ) {
+      return null;
+    }
+    normalized.push(judgement as LlmBatchJudgement);
+  }
+  return { judgements: normalized };
+}
+
+function isAudnDecision(value: string): value is AudnDecision {
+  return ["ADD", "UPDATE", "DELETE", "NOOP"].includes(value);
+}
+
 // ---------------------------------------------------------------------------
 // Pure judgement (no DB side effects)
 // ---------------------------------------------------------------------------
@@ -153,6 +286,14 @@ export interface JudgeOnlyResult {
   targetIndex: number | null;
   newNarrative: string | null;
   reasoning: string;
+}
+
+export interface JudgeOnlyBatchItem extends JudgeOnlyInput {
+  factId: string;
+}
+
+export interface JudgeOnlyBatchResult extends JudgeOnlyResult {
+  factId: string;
 }
 
 /**
@@ -204,7 +345,7 @@ Decide which (if any) memory is the target, or whether to add a new one.`;
 
   const { decision, target_index, new_narrative, reasoning } = raw;
 
-  if (!["ADD", "UPDATE", "DELETE", "NOOP"].includes(decision)) {
+  if (!isAudnDecision(decision)) {
     throw new ValidationError(`AUDN: unknown decision value "${decision}"`);
   }
 
@@ -214,6 +355,131 @@ Decide which (if any) memory is the target, or whether to add a new one.`;
     newNarrative: new_narrative,
     reasoning,
   };
+}
+
+/**
+ * Evaluate multiple independent facts in one LLM request. Facts without any
+ * candidate memories keep the existing deterministic ADD fast path.
+ *
+ * This function is side-effect free. Durable claiming and transactional apply
+ * remain the responsibility of the promotion worker.
+ */
+export async function judgeOnlyBatch(
+  items: JudgeOnlyBatchItem[],
+): Promise<JudgeOnlyBatchResult[]> {
+  if (items.length === 0) return [];
+
+  const inputsById = new Map<string, JudgeOnlyBatchItem>();
+  for (const item of items) {
+    if (!item.factId.trim()) {
+      throw new ValidationError("AUDN batch fact_id must not be empty");
+    }
+    if (inputsById.has(item.factId)) {
+      throw new ValidationError(
+        `AUDN batch input contains duplicate fact_id "${item.factId}"`,
+      );
+    }
+    inputsById.set(item.factId, item);
+  }
+
+  const resultsById = new Map<string, JudgeOnlyBatchResult>();
+  const pending = items.filter((item) => {
+    if (item.existingMemoryNarratives.length > 0) return true;
+    resultsById.set(item.factId, {
+      factId: item.factId,
+      decision: "ADD",
+      targetIndex: null,
+      newNarrative: item.newFact,
+      reasoning: "No existing memories - straight ADD.",
+    });
+    return false;
+  });
+
+  if (pending.length === 0) {
+    return items.map((item) => resultsById.get(item.factId)!);
+  }
+
+  const llm = getLlm("mid");
+  const pendingBatchItems = pending.map((item, index) => ({
+    batchId: `f${index}`,
+    item,
+  }));
+  const pendingByBatchId = new Map(
+    pendingBatchItems.map((entry) => [entry.batchId, entry.item]),
+  );
+  const batchInput = pendingBatchItems.map(({ batchId, item }) => ({
+    fact_id: batchId,
+    new_fact: item.newFact,
+    candidate_memories: item.existingMemoryNarratives.map(
+      (narrative, index) => ({ index, narrative }),
+    ),
+  }));
+  const raw = await llm.completeJson<unknown>({
+    system: BATCH_SYSTEM_PROMPT,
+    user: `Evaluate these facts independently:\n${JSON.stringify(batchInput, null, 2)}`,
+    jsonResponse: true,
+    maxTokens: AUDN_MAX_TOKENS,
+    temperature: 0.0,
+    timeoutMs: AUDN_BATCH_TIMEOUT_MS,
+  });
+
+  const parsed = parseLlmBatchResponse(raw);
+  if (!parsed) {
+    throw new ValidationError(
+      `AUDN batch LLM returned unexpected JSON shape (${describeLlmBatchShape(raw)})`,
+    );
+  }
+
+  const seenBatchIds = new Set<string>();
+  for (const judgement of parsed.judgements) {
+    const input = pendingByBatchId.get(judgement.fact_id);
+    if (!input) {
+      throw new ValidationError(
+        `AUDN batch LLM returned unknown fact_id "${judgement.fact_id}"`,
+      );
+    }
+    if (seenBatchIds.has(judgement.fact_id)) {
+      throw new ValidationError(
+        `AUDN batch LLM returned duplicate fact_id "${judgement.fact_id}"`,
+      );
+    }
+    seenBatchIds.add(judgement.fact_id);
+    if (!isAudnDecision(judgement.decision)) {
+      throw new ValidationError(
+        `AUDN batch: unknown decision value "${judgement.decision}" for fact_id "${input.factId}"`,
+      );
+    }
+
+    if (
+      (judgement.decision === "UPDATE" || judgement.decision === "DELETE") &&
+      (!Number.isInteger(judgement.target_index) ||
+        judgement.target_index === null ||
+        judgement.target_index < 0 ||
+        judgement.target_index >= input.existingMemoryNarratives.length)
+    ) {
+      throw new ValidationError(
+        `AUDN batch target_index out of range for fact_id "${input.factId}"`,
+      );
+    }
+
+    resultsById.set(input.factId, {
+      factId: input.factId,
+      decision: judgement.decision,
+      targetIndex: judgement.target_index,
+      newNarrative: judgement.new_narrative,
+      reasoning: judgement.reasoning,
+    });
+  }
+
+  for (const { batchId, item } of pendingBatchItems) {
+    if (!seenBatchIds.has(batchId)) {
+      throw new ValidationError(
+        `AUDN batch LLM omitted fact_id "${item.factId}"`,
+      );
+    }
+  }
+
+  return items.map((item) => resultsById.get(item.factId)!);
 }
 
 // ---------------------------------------------------------------------------
@@ -281,21 +547,9 @@ export async function planAudn(input: {
   topK?: number;
 }): Promise<AudnPlan> {
   const { newFact, topK = 5 } = input;
+  const existingMemories = await loadExistingMemories(newFact, topK);
 
-  // 1. Retrieve similar existing memories.
-  const hits = await hybridSearch(
-    { query: newFact, limit: topK },
-    { layers: ["memory"] },
-  );
-
-  // 2. Load full memory rows for the hits (need narrative + id).
-  const existingMemories = (
-    await Promise.all(hits.map((h) => memoryRepo.findById(h.id)))
-  ).filter(
-    (m): m is NonNullable<typeof m> => m !== null && m.archived_at === null,
-  );
-
-  // 3. Fast-path: no existing memories → always ADD without calling LLM.
+  // Fast-path: no existing memories → always ADD without calling LLM.
   if (existingMemories.length === 0) {
     return {
       decision: "ADD",
@@ -304,18 +558,87 @@ export async function planAudn(input: {
     };
   }
 
-  // 4. Call pure judgement (same LLM call path that bench exercises).
   const judgement = await judgeOnly({
     newFact,
-    existingMemoryNarratives: existingMemories.map((m) => m.narrative),
+    existingMemoryNarratives: existingMemories.map((memory) => memory.narrative),
   });
+  return buildAudnPlan(newFact, existingMemories, judgement);
+}
 
+/**
+ * Plan several independent durable facts with one MID-tier LLM request.
+ * Search remains fact-scoped; only the pure AUDN judgement is batched.
+ */
+export async function planAudnBatch(
+  inputs: AudnPlanBatchInput[],
+): Promise<AudnPlanBatchResult[]> {
+  if (inputs.length === 0) return [];
+
+  const prepared: Array<{
+    input: AudnPlanBatchInput;
+    existingMemories: ExistingMemory[];
+  }> = [];
+  for (const input of inputs) {
+    prepared.push({
+      input,
+      existingMemories: await loadExistingMemories(
+        input.newFact,
+        input.topK ?? 5,
+      ),
+    });
+  }
+
+  const judgements = await judgeOnlyBatch(
+    prepared.map(({ input, existingMemories }) => ({
+      factId: input.factId,
+      newFact: input.newFact,
+      existingMemoryNarratives: existingMemories.map(
+        (memory) => memory.narrative,
+      ),
+    })),
+  );
+  const judgementById = new Map(
+    judgements.map((judgement) => [judgement.factId, judgement]),
+  );
+  return prepared.map(({ input, existingMemories }) => {
+    const judgement = judgementById.get(input.factId);
+    if (!judgement) {
+      throw new ValidationError(
+        `AUDN batch plan missing fact_id "${input.factId}"`,
+      );
+    }
+    return {
+      factId: input.factId,
+      plan: buildAudnPlan(input.newFact, existingMemories, judgement),
+    };
+  });
+}
+
+async function loadExistingMemories(
+  newFact: string,
+  topK: number,
+): Promise<ExistingMemory[]> {
+  const hits = await hybridSearch(
+    { query: newFact, limit: topK },
+    { layers: ["memory"] },
+  );
+  return (
+    await Promise.all(hits.map((h) => memoryRepo.findById(h.id)))
+  ).filter(
+    (m): m is NonNullable<typeof m> => m !== null && m.archived_at === null,
+  );
+}
+
+function buildAudnPlan(
+  newFact: string,
+  existingMemories: ExistingMemory[],
+  judgement: JudgeOnlyResult,
+): AudnPlan {
   const audnDecision = judgement.decision;
   const target_index = judgement.targetIndex;
   const new_narrative = judgement.newNarrative;
   const reasoning = judgement.reasoning;
 
-  // 5. Resolve target memory.
   let targetMemory =
     target_index !== null ? existingMemories[target_index] : undefined;
 
@@ -334,7 +657,7 @@ export async function planAudn(input: {
     return { decision: "NOOP", reasoning };
   }
 
-  // 6. Return a side-effect-free plan. The durable fact worker applies it in
+  // Return a side-effect-free plan. The durable fact worker applies it in
   // one DB transaction together with provenance and fact completion.
   switch (audnDecision) {
     case "ADD":

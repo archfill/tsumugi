@@ -111,6 +111,7 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
     opts.timeoutMs ?? Number(process.env["LLM_TIMEOUT_MS"] ?? 30000);
 
   async function completeOnce(req: LlmRequest): Promise<LlmResponse> {
+    const requestTimeoutMs = req.timeoutMs ?? timeoutMs;
     const systemPrompt = req.jsonResponse
       ? req.system + "\n\nReturn ONLY valid JSON, no other text."
       : req.system;
@@ -145,8 +146,8 @@ export function createOpenAiCompatClient(opts: OpenAiCompatOptions): LlmClient {
           body: JSON.stringify(body),
           signal,
         }),
-      timeoutMs,
-      `OpenAI-compat fetch timed out after ${timeoutMs}ms (${baseUrl})`,
+      requestTimeoutMs,
+      `OpenAI-compat fetch timed out after ${requestTimeoutMs}ms (${baseUrl})`,
     ).catch((err) => {
       // network failure / timeout -> transient
       const message = err instanceof Error ? err.message : String(err);
