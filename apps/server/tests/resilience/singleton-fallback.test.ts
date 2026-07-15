@@ -42,6 +42,7 @@ function configWithFallback(): Config {
     databaseUrl: "postgresql://example",
     port: 8000,
     mode: "http",
+    shutdownDrainTimeoutMs: 120_000,
     llm: {
       low: {
         primary: {

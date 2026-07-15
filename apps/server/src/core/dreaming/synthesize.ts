@@ -32,6 +32,7 @@ export interface SynthesizeResult {
   clustersFound: number;
   memoriesArchived: number;
   newMemoriesCreated: number;
+  stoppedReason: "completed" | "provider_cooldown" | "shutdown_requested";
   errors: string[];
 }
 
@@ -42,6 +43,8 @@ export interface SynthesizeOptions {
   maxMemories?: number;
   /** Maximum number of clusters to synthesise per run (default 20). */
   maxClusters?: number;
+  /** Cooperative shutdown signal checked before each cluster. */
+  signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,12 +149,18 @@ function clusterMemories(
 export async function synthesizeMemories(
   opts: SynthesizeOptions = {},
 ): Promise<SynthesizeResult> {
-  const { threshold = 0.85, maxMemories = 500, maxClusters = 20 } = opts;
+  const {
+    threshold = 0.85,
+    maxMemories = 500,
+    maxClusters = 20,
+    signal,
+  } = opts;
 
   const runId = newId("drun");
   const errors: string[] = [];
   let memoriesArchived = 0;
   let newMemoriesCreated = 0;
+  let stoppedReason: SynthesizeResult["stoppedReason"] = "completed";
 
   // Record run start.
   await dreamingRunRepo.insert({
@@ -202,6 +211,10 @@ export async function synthesizeMemories(
 
     // 4. Process each cluster.
     for (const cluster of clustersToProcess) {
+      if (signal?.aborted) {
+        stoppedReason = "shutdown_requested";
+        break;
+      }
       try {
         assertLlmAvailable("low");
         // 4a. Build user prompt.
@@ -260,6 +273,7 @@ export async function synthesizeMemories(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (err instanceof ProviderUnavailableError) {
+          stoppedReason = "provider_cooldown";
           errors.push(`provider: ${msg}`);
           break;
         }
@@ -271,15 +285,17 @@ export async function synthesizeMemories(
       }
     }
 
-    if (errors.length > 0) {
+    if (errors.length > 0 || stoppedReason === "shutdown_requested") {
       await dreamingRunRepo.markPartial(
         runId,
         newMemoriesCreated,
-        errors.join("\n"),
-        { errors },
+        errors.join("\n") || "synthesize stopped: shutdown_requested",
+        { errors, stoppedReason },
       );
     } else {
-      await dreamingRunRepo.markCompleted(runId, newMemoriesCreated);
+      await dreamingRunRepo.markCompleted(runId, newMemoriesCreated, {
+        stoppedReason,
+      });
     }
 
     return {
@@ -287,6 +303,7 @@ export async function synthesizeMemories(
       clustersFound,
       memoriesArchived,
       newMemoriesCreated,
+      stoppedReason,
       errors,
     };
   } catch (err) {

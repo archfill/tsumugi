@@ -28,6 +28,7 @@ export interface ReflectionResult {
   sessionId: string;
   observationsScanned: number;
   reflectionsCreated: number;
+  stoppedReason: "completed" | "shutdown_requested";
   errors: string[];
 }
 
@@ -154,12 +155,14 @@ function validateResponse(raw: unknown): LlmReflectionResponse {
 export async function reflectOnSession(input: {
   sessionId: string;
   maxObservations?: number;
+  signal?: AbortSignal;
 }): Promise<ReflectionResult> {
   const { sessionId, maxObservations = 200 } = input;
 
   const runId = newId("drun");
   const errors: string[] = [];
   let reflectionsCreated = 0;
+  let stoppedReason: ReflectionResult["stoppedReason"] = "completed";
 
   // Record run start.
   await dreamingRunRepo.insert({
@@ -173,6 +176,24 @@ export async function reflectOnSession(input: {
 
   try {
     await dreamingRunRepo.markRunning(runId);
+
+    if (input.signal?.aborted) {
+      stoppedReason = "shutdown_requested";
+      await dreamingRunRepo.markPartial(
+        runId,
+        0,
+        "reflection stopped: shutdown_requested",
+        { sessionId, stoppedReason },
+      );
+      return {
+        runId,
+        sessionId,
+        observationsScanned: 0,
+        reflectionsCreated: 0,
+        stoppedReason,
+        errors,
+      };
+    }
 
     // 1. Load observations for the session.
     const observations = await observationRepo.listForSession(
@@ -193,7 +214,26 @@ export async function reflectOnSession(input: {
         sessionId,
         observationsScanned: 0,
         reflectionsCreated: 0,
+        stoppedReason,
         errors: [],
+      };
+    }
+
+    if (input.signal?.aborted) {
+      stoppedReason = "shutdown_requested";
+      await dreamingRunRepo.markPartial(
+        runId,
+        0,
+        "reflection stopped: shutdown_requested",
+        { sessionId, stoppedReason },
+      );
+      return {
+        runId,
+        sessionId,
+        observationsScanned: observations.length,
+        reflectionsCreated: 0,
+        stoppedReason,
+        errors,
       };
     }
 
@@ -230,6 +270,10 @@ export async function reflectOnSession(input: {
 
     // 4. Insert each reflection as a memory + create provenance links.
     for (const r of llmResponse.reflections) {
+      if (input.signal?.aborted) {
+        stoppedReason = "shutdown_requested";
+        break;
+      }
       try {
         const memId = newId("mem");
         const narrative = `[${r.type}] ${r.content}`;
@@ -260,14 +304,27 @@ export async function reflectOnSession(input: {
       }
     }
 
-    // 6. Mark run completed.
-    await dreamingRunRepo.markCompleted(runId, reflectionsCreated);
+    // 6. Mark run terminal.
+    if (stoppedReason === "shutdown_requested" || errors.length > 0) {
+      await dreamingRunRepo.markPartial(
+        runId,
+        reflectionsCreated,
+        errors.join("\n") || "reflection stopped: shutdown_requested",
+        { sessionId, stoppedReason, errors },
+      );
+    } else {
+      await dreamingRunRepo.markCompleted(runId, reflectionsCreated, {
+        sessionId,
+        stoppedReason,
+      });
+    }
 
     return {
       runId,
       sessionId,
       observationsScanned: observations.length,
       reflectionsCreated,
+      stoppedReason,
       errors,
     };
   } catch (err) {

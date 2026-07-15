@@ -1,16 +1,20 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import type { HttpBindings } from "@hono/node-server";
+import type { HttpBindings, ServerType } from "@hono/node-server";
 import { randomUUID } from "node:crypto";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "./server.js";
 import { restApp } from "../rest/routes.js";
-import { loadConfig } from "../../lib/config.js";
+import type { SchedulerConfig } from "../../lib/config.js";
 import { logger } from "../../lib/logger.js";
 import {
   startScheduler,
   type SchedulerHandle,
 } from "../../core/dreaming/scheduler.js";
+import {
+  shutdownRuntimeWithinDeadline,
+  type RuntimeShutdownResult,
+} from "./runtime-shutdown.js";
 import {
   httpRequestDurationSeconds,
   httpRequestsTotal,
@@ -29,6 +33,24 @@ export function getActiveScheduler(): SchedulerHandle | null {
 type Env = { Bindings: HttpBindings };
 type StreamableTransport = WebStandardStreamableHTTPServerTransport;
 
+export interface HttpRuntimeOptions {
+  scheduler: SchedulerConfig;
+  shutdownDrainTimeoutMs: number;
+}
+
+export interface HttpRuntime {
+  shutdown: () => Promise<RuntimeShutdownResult>;
+}
+
+function closeServer(server: ServerType): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error?: Error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
 /** Bucket request paths so we don't explode label cardinality on dynamic ids. */
 function routeLabel(method: string, path: string): string {
   // Strip query string
@@ -46,7 +68,10 @@ function routeLabel(method: string, path: string): string {
     .join("/");
 }
 
-export async function startHttp(port: number): Promise<void> {
+export async function startHttp(
+  port: number,
+  options: HttpRuntimeOptions,
+): Promise<HttpRuntime> {
   const app = new Hono<Env>();
 
   // HTTP metrics middleware (must be first)
@@ -169,10 +194,62 @@ export async function startHttp(port: number): Promise<void> {
     return c.body(await registry.metrics());
   });
 
-  serve({ fetch: app.fetch, port });
+  const httpServer = serve({ fetch: app.fetch, port });
   logger.info({ port, mode: "http" }, "tsumugi http server listening");
 
   // Start dreaming scheduler (http mode only; stdio is short-lived).
-  const config = loadConfig();
-  activeScheduler = startScheduler(config.scheduler);
+  activeScheduler = startScheduler(options.scheduler);
+
+  let shutdownPromise: Promise<RuntimeShutdownResult> | undefined;
+  return {
+    shutdown: () => {
+      shutdownPromise ??= (async () => {
+        const scheduler = activeScheduler;
+        scheduler?.stop();
+
+        const result = await shutdownRuntimeWithinDeadline({
+          timeoutMs: options.shutdownDrainTimeoutMs,
+          close: async () => {
+            const serverClosing = closeServer(httpServer);
+            const closedTransports = await Promise.allSettled(
+              [...transports.values()].map((transport) => transport.close()),
+            );
+            for (const closeResult of closedTransports) {
+              if (closeResult.status === "rejected") {
+                logger.warn(
+                  {
+                    err:
+                      closeResult.reason instanceof Error
+                        ? closeResult.reason.message
+                        : String(closeResult.reason),
+                  },
+                  "failed to close MCP transport during shutdown",
+                );
+              }
+            }
+            await serverClosing;
+          },
+          forceClose: () => {
+            const forceClosable = httpServer as ServerType & {
+              closeAllConnections?: () => void;
+              closeIdleConnections?: () => void;
+            };
+            forceClosable.closeIdleConnections?.();
+            forceClosable.closeAllConnections?.();
+          },
+        });
+
+        activeScheduler = null;
+        logger.info(
+          {
+            drained: result.drained,
+            runningJobs: result.runningJobs,
+          },
+          "tsumugi http server stopped",
+        );
+        return result;
+      })();
+      return shutdownPromise;
+    },
+  };
 }

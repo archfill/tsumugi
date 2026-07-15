@@ -48,6 +48,7 @@ export interface Config {
   port: number;
   mode: "stdio" | "http";
   hfCache?: string;
+  shutdownDrainTimeoutMs: number;
   llm: {
     low: LlmTierConfig;
     mid: LlmTierConfig;
@@ -218,6 +219,11 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
     port: Number(process.env["PORT"] ?? 8000),
     mode,
     hfCache: process.env["HF_CACHE"],
+    shutdownDrainTimeoutMs:
+      parseTimeoutMs(
+        "SHUTDOWN_DRAIN_TIMEOUT_MS",
+        process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"],
+      ) ?? 120_000,
     llm: {
       low: loadTier("low"),
       mid: loadTier("mid"),

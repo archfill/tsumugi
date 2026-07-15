@@ -40,6 +40,21 @@ describe("LLM tier profiles", () => {
       reasoningEffort: "high",
       timeoutMs: 90_000,
     });
+    expect(config.shutdownDrainTimeoutMs).toBe(120_000);
+  });
+
+  it("loads a custom graceful shutdown drain timeout", () => {
+    vi.stubEnv("SHUTDOWN_DRAIN_TIMEOUT_MS", "45000");
+
+    expect(loadConfig(["--http"]).shutdownDrainTimeoutMs).toBe(45_000);
+  });
+
+  it("rejects an invalid graceful shutdown drain timeout", () => {
+    vi.stubEnv("SHUTDOWN_DRAIN_TIMEOUT_MS", "0");
+
+    expect(() => loadConfig(["--http"])).toThrow(
+      "SHUTDOWN_DRAIN_TIMEOUT_MS must be a positive integer",
+    );
   });
 
   it("rejects reasoning effort unless thinking is enabled", () => {

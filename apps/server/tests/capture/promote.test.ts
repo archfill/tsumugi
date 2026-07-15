@@ -176,6 +176,24 @@ describe("promoteCaptures", () => {
     });
   });
 
+  it("shutdown要求後は新しいwindowをclaimしない", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await promoteCaptures(200, {
+      signal: controller.signal,
+    });
+
+    expect(capturePromotionWindowRepoMock.listEligible).not.toHaveBeenCalled();
+    expect(observationPromotionFactRepoMock.countOutstanding).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      windowsSelected: 0,
+      promoted: 0,
+      stoppedReason: "shutdown_requested",
+      errors: [],
+    });
+  });
+
   it("completed turn を window 化して observation として完了する", async () => {
     const captures = [
       capture("cap_user", "UserPromptSubmit"),

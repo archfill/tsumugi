@@ -22,7 +22,8 @@ export type PromoteCapturesStoppedReason =
   | "failure_budget_exceeded"
   | "provider_cooldown"
   | "downstream_backpressure"
-  | "waiting_for_retry";
+  | "waiting_for_retry"
+  | "shutdown_requested";
 
 export interface PromoteCapturesResult {
   capturesSelected: number;
@@ -89,6 +90,7 @@ export async function promoteCaptures(
     maxFailures?: number;
     maxOutstandingFacts?: number;
     maxOutstandingWindows?: number;
+    signal?: AbortSignal;
   },
 ): Promise<PromoteCapturesResult> {
   return await withPgAdvisoryLock(
@@ -102,6 +104,7 @@ export async function promoteCaptures(
           options?.maxOutstandingFacts ?? DEFAULT_MAX_OUTSTANDING_FACTS,
         maxOutstandingWindows:
           options?.maxOutstandingWindows ?? DEFAULT_MAX_OUTSTANDING_WINDOWS,
+        signal: options?.signal,
       }),
     async () => ({
       capturesSelected: 0,
@@ -127,6 +130,7 @@ async function promoteCapturesLocked(
     maxFailures: number;
     maxOutstandingFacts: number;
     maxOutstandingWindows: number;
+    signal?: AbortSignal;
   },
 ): Promise<PromoteCapturesResult> {
   const startedAt = Date.now();
@@ -143,6 +147,10 @@ async function promoteCapturesLocked(
   const errors: string[] = [];
 
   while (windowsSelected < options.maxWindows) {
+    if (options.signal?.aborted) {
+      stoppedReason = "shutdown_requested";
+      break;
+    }
     if (Date.now() - startedAt >= options.maxRunMs) {
       stoppedReason = "run_budget_exceeded";
       break;

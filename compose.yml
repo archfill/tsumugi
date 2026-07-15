@@ -71,6 +71,7 @@ services:
       LLM_MID_TIMEOUT_MS: ${LLM_MID_TIMEOUT_MS:-90000}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-3}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-30000}
+      SHUTDOWN_DRAIN_TIMEOUT_MS: ${SHUTDOWN_DRAIN_TIMEOUT_MS:-120000}
     volumes:
       - tsumugi-hf-cache:/app/.cache/huggingface
     expose:
@@ -79,6 +80,7 @@ services:
       tsumugi-postgres:
         condition: service_healthy
     restart: unless-stopped
+    stop_grace_period: 150s
 
   tsumugi-front:
     build:

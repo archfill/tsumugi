@@ -116,6 +116,38 @@ describe("timeAwareMemoryUpdate outdated handling", () => {
     });
   });
 
+  it("shutdown要求後は次のmemoryを書き換えない", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    memoryRepoMock.archiveOutdated.mockResolvedValueOnce(0);
+    memoryRepoMock.listLlmEligible.mockResolvedValueOnce([
+      agedMemory("mem_pending"),
+    ]);
+
+    const result = await timeAwareMemoryUpdate({
+      maxMemories: 10,
+      maxUpdates: 3,
+      signal: controller.signal,
+    });
+
+    expect(llmMock.completeJson).not.toHaveBeenCalled();
+    expect(memoryRepoMock.archiveOutdated).not.toHaveBeenCalled();
+    expect(memoryRepoMock.listLlmEligible).not.toHaveBeenCalled();
+    expect(memoryRepoMock.update).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      scanned: 0,
+      updated: 0,
+      stoppedReason: "shutdown_requested",
+      errors: [],
+    });
+    expect(dreamingRunRepoMock.markPartial).toHaveBeenCalledWith(
+      result.runId,
+      0,
+      "time-update stopped: shutdown_requested",
+      expect.objectContaining({ stoppedReason: "shutdown_requested" }),
+    );
+  });
+
   it("running 中の time-update があれば新規 run を作らず skip する", async () => {
     dreamingRunRepoMock.findRunningByKind.mockResolvedValueOnce({
       id: "drun_existing",

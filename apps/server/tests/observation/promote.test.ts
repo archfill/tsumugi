@@ -141,6 +141,22 @@ describe("promoteObservations durable fact retry", () => {
     embedderMock.embed.mockResolvedValue(new Float32Array([0.3, 0.4]));
   });
 
+  it("shutdown要求後は新しいfactをclaimしない", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await promoteObservations({ signal: controller.signal });
+
+    expect(observationPromotionFactRepoMock.listEligible).not.toHaveBeenCalled();
+    expect(observationPromotionFactRepoMock.claim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      factsSelected: 0,
+      factsCompleted: 0,
+      stoppedReason: "shutdown_requested",
+      errors: [],
+    });
+  });
+
   it("defer された fact row を次の run で再取得して完了する", async () => {
     const pending = fact("pending", 0);
     const deferred = fact("deferred", 1);

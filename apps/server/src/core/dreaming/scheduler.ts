@@ -36,17 +36,13 @@ interface ScheduledTask {
   task: cron.ScheduledTask;
 }
 
-const running = new Set<DreamingJob>();
-
-async function runIfNotBusy(job: DreamingJob): Promise<void> {
-  if (running.has(job)) {
-    logger.warn({ job }, "scheduler skip: previous run still in progress");
-    return;
-  }
-  running.add(job);
+async function runScheduledJob(
+  job: DreamingJob,
+  signal: AbortSignal,
+): Promise<void> {
   const startedAt = Date.now();
   try {
-    const result = await runDreaming({ job });
+    const result = await runDreaming({ job, signal });
     const status = result.steps.every((step) => step.ok)
       ? "completed"
       : "partial";
@@ -75,8 +71,6 @@ async function runIfNotBusy(job: DreamingJob): Promise<void> {
       },
       "scheduled dreaming job failed",
     );
-  } finally {
-    running.delete(job);
   }
 }
 
@@ -84,6 +78,7 @@ function scheduleOne(
   job: DreamingJob,
   cronExpr: string,
   tasks: ScheduledTask[],
+  trigger: (job: DreamingJob) => void,
 ): void {
   if (!cronExpr || cronExpr.trim() === "") {
     logger.info({ job }, "scheduler: job disabled (empty cron expression)");
@@ -94,7 +89,7 @@ function scheduleOne(
     return;
   }
   const task = cron.schedule(cronExpr, () => {
-    void runIfNotBusy(job);
+    trigger(job);
   });
   task.start();
   tasks.push({ job, cronExpr, task });
@@ -115,16 +110,54 @@ export function startScheduler(
   }
 
   const tasks: ScheduledTask[] = [];
-  scheduleOne("promote-captures", config.promoteCaptures, tasks);
+  const running = new Map<DreamingJob, Promise<void>>();
+  const drainController = new AbortController();
+  let stopped = false;
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    for (const scheduled of tasks) {
+      scheduled.task.stop();
+    }
+    drainController.abort();
+    logger.info("scheduler: stopped");
+  };
+
+  const trigger = (job: DreamingJob) => {
+    if (stopped) {
+      logger.info({ job }, "scheduler skip: shutdown in progress");
+      return;
+    }
+    if (running.has(job)) {
+      logger.warn({ job }, "scheduler skip: previous run still in progress");
+      return;
+    }
+    const promise = runScheduledJob(job, drainController.signal).finally(
+      () => {
+        running.delete(job);
+      },
+    );
+    running.set(job, promise);
+    void promise;
+  };
+
+  scheduleOne("promote-captures", config.promoteCaptures, tasks, trigger);
   scheduleOne(
     "promote-observations",
     config.promoteObservations,
     tasks,
+    trigger,
   );
-  scheduleOne("sweep-captures", config.sweepCaptures, tasks);
-  scheduleOne("synthesize", config.synthesize, tasks);
-  scheduleOne("time-update", config.timeUpdate, tasks);
-  scheduleOne("decision-contradiction", config.decisionContradiction, tasks);
+  scheduleOne("sweep-captures", config.sweepCaptures, tasks, trigger);
+  scheduleOne("synthesize", config.synthesize, tasks, trigger);
+  scheduleOne("time-update", config.timeUpdate, tasks, trigger);
+  scheduleOne(
+    "decision-contradiction",
+    config.decisionContradiction,
+    tasks,
+    trigger,
+  );
 
   if (tasks.length === 0) {
     logger.warn("scheduler: no jobs scheduled");
@@ -137,11 +170,6 @@ export function startScheduler(
 
   return {
     jobs: tasks.map(({ job, cronExpr }) => ({ job, cronExpr })),
-    stop: () => {
-      for (const t of tasks) {
-        t.task.stop();
-      }
-      logger.info("scheduler: stopped");
-    },
+    stop,
   };
 }

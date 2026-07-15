@@ -42,7 +42,8 @@ export interface PromoteObservationsResult {
     | "run_budget_exceeded"
     | "failure_budget_exceeded"
     | "provider_cooldown"
-    | "waiting_for_retry";
+    | "waiting_for_retry"
+    | "shutdown_requested";
   errors: string[];
 }
 
@@ -89,6 +90,7 @@ export async function promoteObservations(options?: {
   maxFailures?: number;
   maxOutstandingFacts?: number;
   factBatchSize?: number;
+  signal?: AbortSignal;
 }): Promise<PromoteObservationsResult> {
   const maxObservations = options?.maxObservations ?? 50;
   const maxFacts = options?.maxFacts ?? 50;
@@ -110,6 +112,7 @@ export async function promoteObservations(options?: {
         maxFailures,
         maxOutstandingFacts,
         factBatchSize,
+        signal: options?.signal,
       }),
     async () => ({
       observationsPrepared: 0,
@@ -136,6 +139,7 @@ async function promoteObservationsLocked(options: {
   maxFailures: number;
   maxOutstandingFacts: number;
   factBatchSize: number;
+  signal?: AbortSignal;
 }): Promise<PromoteObservationsResult> {
   const startedAt = Date.now();
   let observationsPrepared = 0;
@@ -200,6 +204,10 @@ async function promoteObservationsLocked(options: {
   };
 
   promotionLoop: while (factsSelected < options.maxFacts) {
+    if (options.signal?.aborted) {
+      stoppedReason = "shutdown_requested";
+      break;
+    }
     if (Date.now() - startedAt >= options.maxRunMs) {
       stoppedReason = "run_budget_exceeded";
       break;

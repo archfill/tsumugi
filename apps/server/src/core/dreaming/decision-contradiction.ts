@@ -24,12 +24,15 @@ export interface ContradictionResult {
   runId: string;
   scanned: number;
   supersededCount: number;
+  stoppedReason: "completed" | "shutdown_requested";
   errors: string[];
 }
 
 export interface DetectDecisionContradictionsOptions {
   /** Maximum number of in_progress decisions to scan (default 200). */
   maxDecisions?: number;
+  /** Cooperative shutdown signal checked before LLM and mutation work. */
+  signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +177,7 @@ export async function detectPairsOnly(
 export async function detectDecisionContradictions(
   opts: DetectDecisionContradictionsOptions = {},
 ): Promise<ContradictionResult> {
-  const { maxDecisions = 200 } = opts;
+  const { maxDecisions = 200, signal } = opts;
 
   const runId = newId("drun");
   const errors: string[] = [];
@@ -208,6 +211,23 @@ export async function detectDecisionContradictions(
         runId,
         scanned: decisions.length,
         supersededCount: 0,
+        stoppedReason: "completed",
+        errors: [],
+      };
+    }
+
+    if (signal?.aborted) {
+      await dreamingRunRepo.markPartial(
+        runId,
+        0,
+        "decision-contradiction stopped: shutdown_requested",
+        { stoppedReason: "shutdown_requested" },
+      );
+      return {
+        runId,
+        scanned: decisions.length,
+        supersededCount: 0,
+        stoppedReason: "shutdown_requested",
         errors: [],
       };
     }
@@ -239,7 +259,12 @@ export async function detectDecisionContradictions(
     }
 
     // 4. Apply supersede for each detected pair.
+    let stoppedReason: ContradictionResult["stoppedReason"] = "completed";
     for (const pair of raw.pairs) {
+      if (signal?.aborted) {
+        stoppedReason = "shutdown_requested";
+        break;
+      }
       const { superseded_index, new_index } = pair;
 
       // Guard against out-of-bounds indices.
@@ -268,13 +293,25 @@ export async function detectDecisionContradictions(
       }
     }
 
-    // 5. Mark run completed.
-    await dreamingRunRepo.markCompleted(runId, supersededCount);
+    // 5. Mark run terminal.
+    if (stoppedReason === "shutdown_requested") {
+      await dreamingRunRepo.markPartial(
+        runId,
+        supersededCount,
+        "decision-contradiction stopped: shutdown_requested",
+        { stoppedReason, errors },
+      );
+    } else {
+      await dreamingRunRepo.markCompleted(runId, supersededCount, {
+        stoppedReason,
+      });
+    }
 
     return {
       runId,
       scanned: decisions.length,
       supersededCount,
+      stoppedReason,
       errors,
     };
   } catch (err) {

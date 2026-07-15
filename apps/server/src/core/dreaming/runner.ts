@@ -25,6 +25,8 @@ import {
   dreamingRunDurationSeconds,
   dreamingRunsTotal,
 } from "../../lib/metrics.js";
+import { dreamingExecutionCoordinator } from "./execution.js";
+import { recoverStaleDreamingRuns } from "./recover.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -57,6 +59,8 @@ export interface DreamingRunResult {
 
 export interface DreamingRunOptions {
   job: DreamingJob;
+  /** Cooperative shutdown signal checked between durable work items. */
+  signal?: AbortSignal;
   /** Required for 'reflection' job. */
   sessionId?: string;
   /** Max observations to promote per run (default 50). */
@@ -81,7 +85,11 @@ function promotionNeedsAttention(result: {
   errors: string[];
   stoppedReason: string;
 }): boolean {
-  return result.errors.length > 0 || result.stoppedReason === "waiting_for_retry";
+  return (
+    result.errors.length > 0 ||
+    result.stoppedReason === "waiting_for_retry" ||
+    result.stoppedReason === "shutdown_requested"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +98,7 @@ function promotionNeedsAttention(result: {
 
 async function stepPromoteObservations(
   maxObservations: number,
+  signal?: AbortSignal,
 ): Promise<DreamingStepResult> {
   const runId = newId("drun");
   try {
@@ -104,6 +113,7 @@ async function stepPromoteObservations(
     const result = await promoteObservations({
       maxObservations,
       maxFacts: maxObservations,
+      signal,
     });
     const needsAttention = promotionNeedsAttention(result);
     if (needsAttention) {
@@ -136,6 +146,7 @@ async function stepPromoteObservations(
 
 async function stepPromoteCaptures(
   maxCaptures: number,
+  signal?: AbortSignal,
 ): Promise<DreamingStepResult> {
   const runId = newId("drun");
   try {
@@ -147,7 +158,7 @@ async function stepPromoteCaptures(
       output_count: 0,
     });
     await dreamingRunRepo.markRunning(runId);
-    const result = await promoteCaptures(maxCaptures);
+    const result = await promoteCaptures(maxCaptures, { signal });
     const needsAttention = promotionNeedsAttention(result);
     if (needsAttention) {
       await dreamingRunRepo.markPartial(
@@ -204,12 +215,14 @@ async function stepSweepCaptures(): Promise<DreamingStepResult> {
 
 async function stepSynthesize(
   maxMemories: number,
+  signal?: AbortSignal,
 ): Promise<DreamingStepResult> {
   try {
-    const result = await synthesizeMemories({ maxMemories });
+    const result = await synthesizeMemories({ maxMemories, signal });
     return {
       name: "synthesize",
-      ok: result.errors.length === 0,
+      ok:
+        result.errors.length === 0 && result.stoppedReason !== "shutdown_requested",
       detail: result,
     };
   } catch (err) {
@@ -230,6 +243,7 @@ async function stepTimeUpdate(
     maxFailures?: number;
     maxConsecutiveFailures?: number;
     staleRunMs?: number;
+    signal?: AbortSignal;
   },
 ): Promise<DreamingStepResult> {
   try {
@@ -240,10 +254,12 @@ async function stepTimeUpdate(
       maxFailures: opts?.maxFailures,
       maxConsecutiveFailures: opts?.maxConsecutiveFailures,
       staleRunMs: opts?.staleRunMs,
+      signal: opts?.signal,
     });
     return {
       name: "time-update",
-      ok: result.errors.length === 0,
+      ok:
+        result.errors.length === 0 && result.stoppedReason !== "shutdown_requested",
       detail: result,
     };
   } catch (err) {
@@ -256,12 +272,14 @@ async function stepTimeUpdate(
   }
 }
 
-async function stepDecisionContradiction(): Promise<DreamingStepResult> {
+async function stepDecisionContradiction(
+  signal?: AbortSignal,
+): Promise<DreamingStepResult> {
   try {
-    const result = await detectDecisionContradictions({});
+    const result = await detectDecisionContradictions({ signal });
     return {
       name: "decision-contradiction",
-      ok: true,
+      ok: result.stoppedReason !== "shutdown_requested",
       detail: result,
     };
   } catch (err) {
@@ -274,12 +292,16 @@ async function stepDecisionContradiction(): Promise<DreamingStepResult> {
   }
 }
 
-async function stepReflection(sessionId: string): Promise<DreamingStepResult> {
+async function stepReflection(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<DreamingStepResult> {
   try {
-    const result = await reflectOnSession({ sessionId });
+    const result = await reflectOnSession({ sessionId, signal });
     return {
       name: "reflection",
-      ok: true,
+      ok:
+        result.errors.length === 0 && result.stoppedReason !== "shutdown_requested",
       detail: result,
     };
   } catch (err) {
@@ -304,7 +326,7 @@ async function stepReflection(sessionId: string): Promise<DreamingStepResult> {
  *   reflection is excluded from full because it requires an explicit sessionId.
  * - 'reflection' requires opts.sessionId; throws ValidationError if missing.
  */
-export async function runDreaming(
+async function runDreamingInternal(
   opts: DreamingRunOptions,
 ): Promise<DreamingRunResult> {
   const {
@@ -318,6 +340,7 @@ export async function runDreaming(
     timeUpdateMaxFailures,
     timeUpdateMaxConsecutiveFailures,
     timeUpdateStaleRunMs,
+    signal,
   } = opts;
 
   if (job === "reflection" && !sessionId) {
@@ -326,13 +349,15 @@ export async function runDreaming(
     );
   }
 
+  await recoverStaleDreamingRuns();
+
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
   const steps: DreamingStepResult[] = [];
 
   switch (job) {
     case "promote-captures":
-      steps.push(await stepPromoteCaptures(maxCaptures));
+      steps.push(await stepPromoteCaptures(maxCaptures, signal));
       break;
 
     case "sweep-captures":
@@ -340,11 +365,11 @@ export async function runDreaming(
       break;
 
     case "promote-observations":
-      steps.push(await stepPromoteObservations(maxObservations));
+      steps.push(await stepPromoteObservations(maxObservations, signal));
       break;
 
     case "synthesize":
-      steps.push(await stepSynthesize(maxMemories));
+      steps.push(await stepSynthesize(maxMemories, signal));
       break;
 
     case "time-update":
@@ -354,32 +379,38 @@ export async function runDreaming(
           maxFailures: timeUpdateMaxFailures,
           maxConsecutiveFailures: timeUpdateMaxConsecutiveFailures,
           staleRunMs: timeUpdateStaleRunMs,
+          signal,
         }),
       );
       break;
 
     case "decision-contradiction":
-      steps.push(await stepDecisionContradiction());
+      steps.push(await stepDecisionContradiction(signal));
       break;
 
     case "reflection":
-      steps.push(await stepReflection(sessionId!));
+      steps.push(await stepReflection(sessionId!, signal));
       break;
 
     case "full":
       // Sequence: capture promotion → observation promotion → synthesize → time-update → decision-contradiction
-      steps.push(await stepPromoteCaptures(maxCaptures));
-      steps.push(await stepPromoteObservations(maxObservations));
-      steps.push(await stepSynthesize(maxMemories));
+      steps.push(await stepPromoteCaptures(maxCaptures, signal));
+      if (signal?.aborted) break;
+      steps.push(await stepPromoteObservations(maxObservations, signal));
+      if (signal?.aborted) break;
+      steps.push(await stepSynthesize(maxMemories, signal));
+      if (signal?.aborted) break;
       steps.push(
         await stepTimeUpdate(maxMemories, maxUpdates, {
           maxRunMs: timeUpdateMaxRunMs,
           maxFailures: timeUpdateMaxFailures,
           maxConsecutiveFailures: timeUpdateMaxConsecutiveFailures,
           staleRunMs: timeUpdateStaleRunMs,
+          signal,
         }),
       );
-      steps.push(await stepDecisionContradiction());
+      if (signal?.aborted) break;
+      steps.push(await stepDecisionContradiction(signal));
       break;
 
     default: {
@@ -405,4 +436,12 @@ export async function runDreaming(
     durationMs,
     steps,
   };
+}
+
+export function runDreaming(
+  opts: DreamingRunOptions,
+): Promise<DreamingRunResult> {
+  return dreamingExecutionCoordinator.run(opts.job, opts.signal, (signal) =>
+    runDreamingInternal({ ...opts, signal }),
+  );
 }

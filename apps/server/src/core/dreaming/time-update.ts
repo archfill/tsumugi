@@ -49,7 +49,8 @@ export type TimeUpdateStoppedReason =
   | "time_budget_exceeded"
   | "failure_budget_exceeded"
   | "consecutive_failure_budget_exceeded"
-  | "provider_cooldown";
+  | "provider_cooldown"
+  | "shutdown_requested";
 
 // ---------------------------------------------------------------------------
 // Internal LLM response shape
@@ -257,6 +258,7 @@ export async function timeAwareMemoryUpdate(opts?: {
   maxFailures?: number;
   maxConsecutiveFailures?: number;
   staleRunMs?: number;
+  signal?: AbortSignal;
 }): Promise<TimeUpdateResult> {
   const maxMemories = opts?.maxMemories ?? 500;
   const maxUpdates = opts?.maxUpdates ?? 50;
@@ -316,6 +318,40 @@ export async function timeAwareMemoryUpdate(opts?: {
   await dreamingRunRepo.markRunning(runId);
 
   try {
+    if (opts?.signal?.aborted) {
+      stoppedReason = "shutdown_requested";
+      const runMetadata = buildRunMetadata({
+        scanned,
+        updated,
+        archivedOutdated,
+        failed,
+        stoppedReason,
+        durationMs: Date.now() - startedMs,
+        maxRunMs,
+        maxUpdates,
+        maxFailures,
+        maxConsecutiveFailures,
+        staleRunsMarked,
+        errors,
+      });
+      await dreamingRunRepo.markPartial(
+        runId,
+        0,
+        "time-update stopped: shutdown_requested",
+        { ...runMetadata },
+      );
+      return {
+        runId,
+        scanned,
+        updated,
+        archivedOutdated,
+        failed,
+        skipped: false,
+        stoppedReason,
+        errors,
+      };
+    }
+
     // 2. Archive memories explicitly marked outdated by an agent. This keeps
     // direct tool calls reversible until the next dreaming maintenance pass.
     archivedOutdated = await memoryRepo.archiveOutdated(maxMemories);
@@ -330,6 +366,10 @@ export async function timeAwareMemoryUpdate(opts?: {
     const embedder = getEmbedder();
 
     for (const memory of memories) {
+      if (opts?.signal?.aborted) {
+        stoppedReason = "shutdown_requested";
+        break;
+      }
       if (updated >= maxUpdates) break;
       if (Date.now() - startedMs >= maxRunMs) {
         stoppedReason = "time_budget_exceeded";
@@ -413,11 +453,11 @@ export async function timeAwareMemoryUpdate(opts?: {
       staleRunsMarked,
       errors,
     });
-    if (errors.length > 0) {
+    if (errors.length > 0 || stoppedReason === "shutdown_requested") {
       await dreamingRunRepo.markPartial(
         runId,
         updated + archivedOutdated,
-        errors.join("\n"),
+        errors.join("\n") || "time-update stopped: shutdown_requested",
         { ...runMetadata },
       );
     } else {
