@@ -8,6 +8,7 @@
 
 import process from "node:process";
 import { observationRepo } from "./repos/observation.js";
+import { dreamingRunRepo } from "./repos/dreaming-run.js";
 import { newId } from "../lib/id.js";
 
 const databaseUrl = process.env["DATABASE_URL"];
@@ -25,6 +26,7 @@ function assert(condition: boolean, message: string): void {
 }
 
 const observationId = newId("obs");
+const dreamingRunId = newId("drun");
 
 try {
   await observationRepo.insert({
@@ -58,7 +60,36 @@ try {
     !pendingAfter.some((row) => row.id === observationId),
     "promoted observation is excluded from pending list",
   );
-} finally {
-  await observationRepo.deleteById(observationId);
-}
 
+  await dreamingRunRepo.insert({
+    id: dreamingRunId,
+    job_kind: "database-smoke",
+    status: "pending",
+    input_count: 1,
+    output_count: 0,
+  });
+  await dreamingRunRepo.markRunning(dreamingRunId);
+
+  const runningRun = await dreamingRunRepo.findById(dreamingRunId);
+  assert(runningRun?.status === "running", "dreaming run is marked running");
+  assert(
+    typeof runningRun?.metadata?.["ownerId"] === "string",
+    "dreaming run ownership is retained",
+  );
+  assert(
+    typeof runningRun?.metadata?.["heartbeatAt"] === "string",
+    "dreaming run heartbeat is recorded",
+  );
+
+  await dreamingRunRepo.markCompleted(dreamingRunId, 1);
+  const completedRun = await dreamingRunRepo.findById(dreamingRunId);
+  assert(
+    completedRun?.status === "completed",
+    "owned dreaming run reaches a terminal state",
+  );
+} finally {
+  await Promise.all([
+    dreamingRunRepo.deleteById(dreamingRunId),
+    observationRepo.deleteById(observationId),
+  ]);
+}

@@ -38,13 +38,25 @@ export const dreamingRunRepo = {
   async update(id: string, patch: Partial<NewDreamingRunRow>): Promise<void> {
     await db.update(dreamingRuns).set(patch).where(eq(dreamingRuns.id, id));
   },
+  async findById(id: string): Promise<DreamingRunRow | null> {
+    const rows = await db
+      .select()
+      .from(dreamingRuns)
+      .where(eq(dreamingRuns.id, id))
+      .limit(1);
+    return rows[0] ?? null;
+  },
+  async deleteById(id: string): Promise<void> {
+    await db.delete(dreamingRuns).where(eq(dreamingRuns.id, id));
+  },
   async markRunning(id: string): Promise<void> {
     const rows = await db
       .update(dreamingRuns)
       .set({
         status: "running",
         started_at: sql`now()`,
-        metadata: sql`coalesce(${dreamingRuns.metadata}, '{}'::jsonb) || jsonb_build_object('ownerId', ${processOwnerId}, 'heartbeatAt', now())`,
+        // ownerId is written on insert and verified by ownedNonTerminal().
+        metadata: sql`coalesce(${dreamingRuns.metadata}, '{}'::jsonb) || jsonb_build_object('heartbeatAt', now())`,
       })
       .where(ownedNonTerminal(id))
       .returning({ id: dreamingRuns.id });

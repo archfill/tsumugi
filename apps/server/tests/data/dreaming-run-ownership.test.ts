@@ -26,6 +26,12 @@ describe("dreamingRunRepo ownership", () => {
     ).rejects.toThrow("lost ownership before terminal update");
   });
 
+  it("allows the owner to mark a pending run as running", async () => {
+    returningMock.mockResolvedValue([{ id: "drun_1" }]);
+
+    await expect(dreamingRunRepo.markRunning("drun_1")).resolves.toBeUndefined();
+  });
+
   it("allows a terminal update while the process still owns the run", async () => {
     returningMock.mockResolvedValue([{ id: "drun_1" }]);
 
