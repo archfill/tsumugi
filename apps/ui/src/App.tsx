@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type {
+  AdminDreamingRunPage,
   AdminFilterOptions,
   AdminOperationIssue,
   AdminOperationIssuePage,
@@ -15,6 +16,11 @@ import type {
   AdminPipelineTracePage,
 } from "@tsumugi/shared";
 import { api, queryString } from "./api.js";
+import {
+  formatFallbackRate,
+  formatRunCount,
+  readDreamingRunMetrics,
+} from "./run-metrics.js";
 
 type ViewId = "overview" | "pipeline" | "memories" | "operations";
 type MemoryMode = "memories" | "decisions";
@@ -51,17 +57,6 @@ interface DecisionRecord {
   supersedes_id: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface DreamingRun {
-  id: string;
-  job_kind: string;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-  input_count: number;
-  output_count: number;
-  error_message: string | null;
 }
 
 interface SchedulerResponse {
@@ -354,14 +349,20 @@ function OverviewView({ filters }: { filters: Filters }) {
         <article className="ledger-panel attention-panel">
           <header className="panel-heading">
             <div>
-              <p className="eyebrow">Attention</p>
-              <h3>Review queue</h3>
+              <p className="eyebrow">Now</p>
+              <h3>Actionable attention</h3>
             </div>
             <strong>{overview.data.attention_count.toLocaleString()}</strong>
           </header>
           <p>
-            deferred、quarantined、stale lease、outdated、failed runの合計です。
+            現在retryまたはreviewが必要なquarantine、期限到来済みdefer、stale
+            lease、outdatedの合計です。
           </p>
+          <div className="history-count">
+            <span>History</span>
+            <strong>{overview.data.history_issue_count.toLocaleString()}</strong>
+            <small>global failed / partial runs retained for audit</small>
+          </div>
         </article>
 
         <article className="ledger-panel">
@@ -834,6 +835,11 @@ function MemoriesView({
 
 function OperationsView({ filters }: { filters: Filters }) {
   const queryClient = useQueryClient();
+  const overview = useQuery({
+    queryKey: ["admin-overview", filters],
+    queryFn: () =>
+      api<AdminOverview>(`/admin/overview${queryString(scopeParams(filters))}`),
+  });
   const issues = useInfiniteQuery({
     queryKey: ["operation-issues", filters],
     initialPageParam: undefined as string | undefined,
@@ -849,7 +855,7 @@ function OperationsView({ filters }: { filters: Filters }) {
   });
   const runs = useQuery({
     queryKey: ["dreaming-runs"],
-    queryFn: () => api<{ runs: DreamingRun[]; total: number }>("/dreaming/runs?limit=50"),
+    queryFn: () => api<AdminDreamingRunPage>("/dreaming/runs?limit=50"),
   });
   const scheduler = useQuery({
     queryKey: ["scheduler"],
@@ -876,8 +882,11 @@ function OperationsView({ filters }: { filters: Filters }) {
       <section className="ledger-panel issue-panel">
         <header className="panel-heading">
           <div>
-            <p className="eyebrow">Needs review</p>
-            <h3>{issueRows.length.toLocaleString()} issues loaded</h3>
+            <p className="eyebrow">Current attention</p>
+            <h3>
+              {overview.data?.attention_count.toLocaleString() ?? "—"} actionable
+            </h3>
+            <small>{issueRows.length.toLocaleString()} loaded</small>
           </div>
           <button type="button" onClick={() => void issues.refetch()}>
             Refresh
@@ -939,7 +948,10 @@ function OperationsView({ filters }: { filters: Filters }) {
             );
           })}
           {!issues.isLoading && issueRows.length === 0 && (
-            <div className="message">No operational issues in this scope.</div>
+            <div className="message">
+              No current operational issues in this scope. Historical failures
+              remain in execution history.
+            </div>
           )}
         </div>
         {issues.hasNextPage && (
@@ -976,21 +988,65 @@ function OperationsView({ filters }: { filters: Filters }) {
             <div>
               <p className="eyebrow">Execution history</p>
               <h3>{runs.data?.total.toLocaleString() ?? "—"} runs</h3>
+              <small>
+                {overview.data?.history_issue_count.toLocaleString() ?? "—"}
+                {" global failed / partial"}
+              </small>
             </div>
           </header>
           {runs.error && <ErrorPanel error={runs.error} />}
           <div className="run-list">
-            {runs.data?.runs.map((run) => (
-              <article key={run.id}>
-                <time>{formatTime(run.started_at)}</time>
-                <b>{run.job_kind}</b>
-                <StatePill state={run.status} />
-                <span>
-                  {run.input_count} in / {run.output_count} out
-                </span>
-                {run.error_message && <p>{run.error_message}</p>}
-              </article>
-            ))}
+            {runs.data?.runs.map((run) => {
+              const metrics = readDreamingRunMetrics(run.metadata);
+              return (
+                <article key={run.id}>
+                  <time>{formatTime(run.started_at)}</time>
+                  <b>{run.job_kind}</b>
+                  <StatePill state={run.status} />
+                  <span>
+                    {run.input_count} in / {run.output_count} out
+                  </span>
+                  {metrics && (
+                    <div className="run-metrics" aria-label="Batch processing metrics">
+                      {(metrics.factsSelected !== null ||
+                        metrics.factsCompleted !== null) && (
+                        <span>
+                          <b>facts</b>
+                          {formatRunCount(metrics.factsCompleted)} /{" "}
+                          {formatRunCount(metrics.factsSelected)}
+                        </span>
+                      )}
+                      {metrics.factBatchesSelected !== null && (
+                        <span>
+                          <b>batches</b>
+                          {formatRunCount(metrics.factBatchesSelected)}
+                        </span>
+                      )}
+                      {metrics.factBatchFallbacks !== null && (
+                        <span>
+                          <b>fallback</b>
+                          {formatRunCount(metrics.factBatchFallbacks)} ·{" "}
+                          {formatFallbackRate(metrics.fallbackRate)}
+                        </span>
+                      )}
+                      {metrics.factsDeferred !== null && (
+                        <span>
+                          <b>defer</b>
+                          {formatRunCount(metrics.factsDeferred)}
+                        </span>
+                      )}
+                      {metrics.stoppedReason && (
+                        <span>
+                          <b>stop</b>
+                          {metrics.stoppedReason}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {run.error_message && <p>{run.error_message}</p>}
+                </article>
+              );
+            })}
           </div>
         </section>
       </div>

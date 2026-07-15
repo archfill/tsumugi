@@ -93,6 +93,7 @@ describe("Admin REST read contract", () => {
       layers: [],
       queues: [],
       attention_count: 0,
+      history_issue_count: 55,
     });
     adminRepoMock.listPipelineTraces.mockResolvedValue({
       traces: [],
@@ -118,6 +119,10 @@ describe("Admin REST read contract", () => {
     );
 
     expect(response.status).toBe(200);
+    await expect(response.clone().json()).resolves.toMatchObject({
+      attention_count: 0,
+      history_issue_count: 55,
+    });
     expect(adminRepoMock.getOverview).toHaveBeenCalledWith(
       expect.objectContaining({
         project: "tsumugi",

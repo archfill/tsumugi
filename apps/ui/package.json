@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "lint": "echo 'lint: not configured yet'",
     "typecheck": "tsc -b",
-    "test": "echo 'no tests yet'",
+    "test": "node --test tests/*.test.mjs",
     "check": "pnpm typecheck && pnpm build"
   },
   "dependencies": {

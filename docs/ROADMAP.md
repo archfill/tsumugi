@@ -60,6 +60,7 @@ ROADMAP.md は「**何が決まっていて、次に何をすべきか**」を 1
 - 同一 provider endpoint + credential の LLM 呼出しは job / tier をまたいで直列化する
 - capture→observation は window 単位、observation→memory は fact 単位で state / lease / retry / quarantine と transaction 境界を持つ
 - Admin UI を Overview / Pipeline / Memories / Operations の運用コンソールへ改訂し、read-only の layer 集計、trace、issues、project / source / state / 期間 filter を追加
+- Admin overview / Operations で現在attentionとfailed / partial run履歴を分離し、workerと同じcapture actionable条件、run単位のbatch / fallback / defer metadata表示を採用
 - 既存 integration 向け REST contract は維持し、Admin 集計 API は `/api/admin/*` に分離
 
 ### 本番 baseline evidence

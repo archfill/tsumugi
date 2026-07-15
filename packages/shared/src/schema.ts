@@ -144,12 +144,46 @@ export const AdminOverview = z.object({
   layers: z.array(AdminLayerSummary),
   queues: z.array(AdminQueueSummary),
   attention_count: z.number().int().nonnegative(),
+  history_issue_count: z.number().int().nonnegative(),
   scheduler: z.object({
     enabled: z.boolean(),
     jobs: z.array(AdminSchedulerJob),
   }),
 });
 export type AdminOverview = z.infer<typeof AdminOverview>;
+
+export const AdminDreamingRunMetadata = z
+  .object({
+    factsSelected: z.number().int().nonnegative().optional(),
+    factBatchesSelected: z.number().int().nonnegative().optional(),
+    factBatchFallbacks: z.number().int().nonnegative().optional(),
+    factsCompleted: z.number().int().nonnegative().optional(),
+    factsDeferred: z.number().int().nonnegative().optional(),
+    stoppedReason: z.string().optional(),
+  })
+  .catchall(z.unknown());
+export type AdminDreamingRunMetadata = z.infer<
+  typeof AdminDreamingRunMetadata
+>;
+
+export const AdminDreamingRun = z.object({
+  id: z.string(),
+  job_kind: z.string(),
+  status: z.string(),
+  started_at: z.string(),
+  finished_at: z.string().nullable(),
+  input_count: z.number().int().nonnegative(),
+  output_count: z.number().int().nonnegative(),
+  error_message: z.string().nullable(),
+  metadata: AdminDreamingRunMetadata.nullable(),
+});
+export type AdminDreamingRun = z.infer<typeof AdminDreamingRun>;
+
+export const AdminDreamingRunPage = z.object({
+  runs: z.array(AdminDreamingRun),
+  total: z.number().int().nonnegative(),
+});
+export type AdminDreamingRunPage = z.infer<typeof AdminDreamingRunPage>;
 
 export const AdminPipelineTrace = z.object({
   id: z.string(),
