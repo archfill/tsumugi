@@ -79,6 +79,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build shared package
+        run: pnpm --filter @tsumugi/shared build
+
       - name: Start PostgreSQL
         run: docker compose up -d --build --wait tsumugi-postgres
 
