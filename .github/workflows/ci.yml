@@ -42,6 +42,16 @@ jobs:
       - name: Build (all workspaces)
         run: pnpm -r build
 
+      - name: Compiled capture retirement CLI argument smoke
+        run: |
+          set +e
+          pnpm -C apps/server capture:retire-legacy --apply
+          exit_code=$?
+          test "$exit_code" -eq 2
+
+      - name: Compiled provenance policy eval smoke
+        run: pnpm -C apps/server eval:search-provenance-policy
+
       - name: Test (all workspaces)
         run: pnpm -r test
 
@@ -69,6 +79,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build shared package
+        run: pnpm --filter @tsumugi/shared build
+
       - name: Start PostgreSQL
         run: docker compose up -d --build --wait tsumugi-postgres
 
@@ -81,3 +94,9 @@ jobs:
         env:
           DATABASE_URL: postgresql://tsumugi:tsumugi_dev@localhost:5433/tsumugi
         run: pnpm -C apps/server db:smoke
+
+      - name: Capture promotion integration
+        env:
+          DATABASE_URL: postgresql://tsumugi:tsumugi_dev@localhost:5433/tsumugi
+          TSUMUGI_ALLOW_DESTRUCTIVE_TEST_DB: "true"
+        run: pnpm -C apps/server test:integration

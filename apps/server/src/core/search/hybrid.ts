@@ -14,6 +14,7 @@ import { rrfFuse } from "./rrf.js";
 import {
   attachProvenance,
   filterMemoryHitsByProjectTag,
+  preferObservationCandidates,
 } from "./provenance.js";
 
 export type { SearchHit };
@@ -93,9 +94,13 @@ export async function hybridSearch(
   // 4. RRF fusion.
   const fused = rrfFuse([bigmFlat, vectorFlat], { k });
 
-  // 5. Trim and map to SearchHit.
+  // 5. Prefer a candidate observation over only its directly-derived candidate
+  // memory, then slice so lower-ranked independent candidates backfill.
+  const preferred = await preferObservationCandidates(fused);
+
+  // 6. Trim and map to SearchHit.
   return await attachProvenance(
-    fused.slice(0, limit).map((item) => ({
+    preferred.slice(0, limit).map((item) => ({
       id: item.id,
       layer: item.layer,
       excerpt: item.excerpt,

@@ -1,7 +1,7 @@
 # ADR-006: 管理 UI は運用卓として設計する
 
 - 日付: 2026-06-14
-- 最終更新: 2026-07-14
+- 最終更新: 2026-07-26
 - ステータス: Accepted
 - 影響 ADR: ADR-013 (provenance / outdated), ADR-014 (Three-layer architecture)
 
@@ -38,7 +38,7 @@ ADR-014 反映後の管理 UI は以下の 4 画面を基本単位とする。Ca
 | Overview   | Capture / Observation / Memory の件数、state、滞留、queue を俯瞰    |
 | Pipeline   | capture / window / observation / fact / provenance を trace 単位で追跡 |
 | Memories   | Memory と Decision の検索、状態確認、既存 edit / archive           |
-| Operations | scheduler、dreaming runs、deferred / quarantine / stale / outdated |
+| Operations | deterministic scheduler / runs、Stop window の deferred / quarantine / stale、outdated |
 
 Provenance は独立した edge ID 一覧ではなく Pipeline detail に統合する。Decision は Memories
 内の副 view、Dreaming runs と Settings は Operations に統合する。
@@ -71,6 +71,10 @@ retry / restore mutation を追加する。raw capture は response に返さず
 必要なquarantine、期限到来済みdefer、stale lease、outdatedのみを数える。過去のfailed /
 partial dreaming runはproject / source帰属を持たないglobalな `history_issue_count` と
 `GET /api/dreaming/runs` に分離し、回収済みの履歴を現在障害として表示しない。
+
+2026-07-26 の ADR-003 改訂後、fact / observation promotion queue と memory の LLM quarantine は
+historical read-only 表示に限定する。現在attention、retry button、scheduler job数へは含めない。
+現在issueになるのは deterministic Stop window、active deterministic run、outdated memory だけである。
 
 ### UX 原則
 

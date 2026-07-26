@@ -1,46 +1,16 @@
-/**
- * Dreaming Runner — Phase 2 Wave 4 (Orchestrator)
- *
- * Runs one or more dreaming jobs in order and records per-step results.
- * Each step is individually try/caught; failure of one step does not abort
- * subsequent steps (best-effort execution).
- *
- * Usage:
- *   const result = await runDreaming({ job: 'full' });
- *   const result = await runDreaming({ job: 'reflection', sessionId: 'ses_...' });
- */
-
-import { captureRepo } from "../../data/repos/capture.js";
-import { capturePromotionWindowRepo } from "../../data/repos/capture-promotion-window.js";
-import { dreamingRunRepo } from "../../data/repos/dreaming-run.js";
-import { promoteCaptures } from "../capture/promote.js";
-import { promoteObservations } from "../observation/promote.js";
-import { synthesizeMemories } from "./synthesize.js";
-import { timeAwareMemoryUpdate } from "./time-update.js";
-import { detectDecisionContradictions } from "./decision-contradiction.js";
-import { reflectOnSession } from "./reflection.js";
-import { ValidationError } from "../../lib/errors.js";
-import { newId } from "../../lib/id.js";
-import {
-  dreamingRunDurationSeconds,
-  dreamingRunsTotal,
-} from "../../lib/metrics.js";
-import { dreamingExecutionCoordinator } from "./execution.js";
-import { recoverStaleDreamingRuns } from "./recover.js";
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
+import type { PromoteCapturesResult } from "../capture/promote.js";
 
 export type DreamingJob =
-  | "promote-captures" // summarize Layer 1 captures into Layer 2 observations
+  | "promote-captures"
   | "sweep-captures"
-  | "promote-observations" // summarize + AUDN judge for pending observations
+  | "archive-outdated"
+  // One-release compatibility aliases for removed server-LLM jobs.
+  | "promote-observations"
   | "synthesize"
   | "time-update"
   | "decision-contradiction"
   | "reflection"
-  | "full"; // all jobs in sequence (except reflection)
+  | "full";
 
 export interface DreamingStepResult {
   name: string;
@@ -59,95 +29,63 @@ export interface DreamingRunResult {
 
 export interface DreamingRunOptions {
   job: DreamingJob;
-  /** Cooperative shutdown signal checked between durable work items. */
   signal?: AbortSignal;
-  /** Required for 'reflection' job. */
   sessionId?: string;
-  /** Max observations to promote per run (default 50). */
-  maxObservations?: number;
-  /** Max captures to promote per run (default 50). */
   maxCaptures?: number;
-  /** Max memories to load for synthesize / time-update (default 500). */
+  maxObservations?: number;
   maxMemories?: number;
-  /** Max memories to actually rewrite in time-update (default 50). */
   maxUpdates?: number;
-  /** Max wall-clock time for time-update before graceful stop. */
   timeUpdateMaxRunMs?: number;
-  /** Max per-memory LLM failures before time-update stops early. */
   timeUpdateMaxFailures?: number;
-  /** Max consecutive per-memory LLM failures before time-update stops early. */
   timeUpdateMaxConsecutiveFailures?: number;
-  /** Age after which a previous running time-update is marked stale. */
   timeUpdateStaleRunMs?: number;
 }
 
-function promotionNeedsAttention(result: {
-  errors: string[];
-  stoppedReason: string;
-}): boolean {
-  return (
-    result.errors.length > 0 ||
-    result.stoppedReason === "waiting_for_retry" ||
-    result.stoppedReason === "shutdown_requested"
-  );
+const REMOVED_SERVER_LLM_JOBS = new Set<DreamingJob>([
+  "promote-observations",
+  "synthesize",
+  "time-update",
+  "decision-contradiction",
+  "reflection",
+  "full",
+]);
+
+function removedServerLlmResult(job: DreamingJob): DreamingRunResult {
+  const timestamp = new Date().toISOString();
+  return {
+    job,
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    durationMs: 0,
+    steps: [
+      {
+        name: job,
+        ok: true,
+        detail: { skipped: true, reason: "removed_server_llm" },
+      },
+    ],
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Step runners
-// ---------------------------------------------------------------------------
-
-async function stepPromoteObservations(
-  maxObservations: number,
-  signal?: AbortSignal,
-): Promise<DreamingStepResult> {
-  const runId = newId("drun");
-  try {
-    await dreamingRunRepo.insert({
-      id: runId,
-      job_kind: "promote-observations",
-      status: "pending",
-      input_count: maxObservations,
-      output_count: 0,
-    });
-    await dreamingRunRepo.markRunning(runId);
-    const result = await promoteObservations({
-      maxObservations,
-      maxFacts: maxObservations,
-      signal,
-    });
-    const needsAttention = promotionNeedsAttention(result);
-    if (needsAttention) {
-      await dreamingRunRepo.markPartial(
-        runId,
-        result.factsCompleted,
-        result.errors.join("\n") || `promotion stopped: ${result.stoppedReason}`,
-        { ...result },
-      );
-    } else {
-      await dreamingRunRepo.markCompleted(runId, result.factsCompleted, {
-        ...result,
-      });
-    }
-    return {
-      name: "promote-observations",
-      ok: !needsAttention,
-      detail: result,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await dreamingRunRepo.markFailed(runId, msg);
-    return {
-      name: "promote-observations",
-      ok: false,
-      error: msg,
-    };
-  }
+function promotionNeedsAttention(result: PromoteCapturesResult): boolean {
+  return (
+    result.errors.length > 0 ||
+    result.stoppedReason === "run_budget_exceeded" ||
+    result.stoppedReason === "failure_budget_exceeded" ||
+    result.stoppedReason === "shutdown_requested"
+  );
 }
 
 async function stepPromoteCaptures(
   maxCaptures: number,
   signal?: AbortSignal,
 ): Promise<DreamingStepResult> {
+  const [{ dreamingRunRepo }, { newId }, { promoteCaptures }] =
+    await Promise.all([
+      import("../../data/repos/dreaming-run.js"),
+      import("../../lib/id.js"),
+      import("../capture/promote.js"),
+    ]);
   const runId = newId("drun");
   try {
     await dreamingRunRepo.insert({
@@ -159,39 +97,38 @@ async function stepPromoteCaptures(
     });
     await dreamingRunRepo.markRunning(runId);
     const result = await promoteCaptures(maxCaptures, { signal });
+    const outputCount = result.promoted + result.skipped;
     const needsAttention = promotionNeedsAttention(result);
     if (needsAttention) {
       await dreamingRunRepo.markPartial(
         runId,
-        result.promoted + result.skipped,
-        result.errors.join("\n") || `promotion stopped: ${result.stoppedReason}`,
+        outputCount,
+        result.errors.join("\n") ||
+          `promotion stopped: ${result.stoppedReason}`,
         { ...result },
       );
     } else {
-      await dreamingRunRepo.markCompleted(
-        runId,
-        result.promoted + result.skipped,
-        { ...result },
-      );
+      await dreamingRunRepo.markCompleted(runId, outputCount, { ...result });
     }
     return {
       name: "promote-captures",
       ok: !needsAttention,
       detail: result,
     };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await dreamingRunRepo.markFailed(runId, msg);
-    return {
-      name: "promote-captures",
-      ok: false,
-      error: msg,
-    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await dreamingRunRepo.markFailed(runId, message);
+    return { name: "promote-captures", ok: false, error: message };
   }
 }
 
 async function stepSweepCaptures(): Promise<DreamingStepResult> {
   try {
+    const [{ captureRepo }, { capturePromotionWindowRepo }] =
+      await Promise.all([
+        import("../../data/repos/capture.js"),
+        import("../../data/repos/capture-promotion-window.js"),
+      ]);
     const [deletedPromoted, deletedExpired, clearedWindowContent] =
       await Promise.all([
         captureRepo.deletePromoted(),
@@ -203,245 +140,105 @@ async function stepSweepCaptures(): Promise<DreamingStepResult> {
       ok: true,
       detail: { deletedPromoted, deletedExpired, clearedWindowContent },
     };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return {
-      name: "sweep-captures",
-      ok: false,
-      error: msg,
-    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { name: "sweep-captures", ok: false, error: message };
   }
 }
 
-async function stepSynthesize(
+async function stepArchiveOutdated(
   maxMemories: number,
-  signal?: AbortSignal,
 ): Promise<DreamingStepResult> {
+  const [{ dreamingRunRepo }, { newId }, { archiveOutdatedMemories }] =
+    await Promise.all([
+      import("../../data/repos/dreaming-run.js"),
+      import("../../lib/id.js"),
+      import("./archive-outdated.js"),
+    ]);
+  const runId = newId("drun");
   try {
-    const result = await synthesizeMemories({ maxMemories, signal });
-    return {
-      name: "synthesize",
-      ok:
-        result.errors.length === 0 && result.stoppedReason !== "shutdown_requested",
-      detail: result,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return {
-      name: "synthesize",
-      ok: false,
-      error: msg,
-    };
-  }
-}
-
-async function stepTimeUpdate(
-  maxMemories: number,
-  maxUpdates: number,
-  opts?: {
-    maxRunMs?: number;
-    maxFailures?: number;
-    maxConsecutiveFailures?: number;
-    staleRunMs?: number;
-    signal?: AbortSignal;
-  },
-): Promise<DreamingStepResult> {
-  try {
-    const result = await timeAwareMemoryUpdate({
-      maxMemories,
-      maxUpdates,
-      maxRunMs: opts?.maxRunMs,
-      maxFailures: opts?.maxFailures,
-      maxConsecutiveFailures: opts?.maxConsecutiveFailures,
-      staleRunMs: opts?.staleRunMs,
-      signal: opts?.signal,
+    await dreamingRunRepo.insert({
+      id: runId,
+      job_kind: "archive-outdated",
+      status: "pending",
+      input_count: maxMemories,
+      output_count: 0,
     });
+    await dreamingRunRepo.markRunning(runId);
+    const detail = await archiveOutdatedMemories(runId, maxMemories);
     return {
-      name: "time-update",
-      ok:
-        result.errors.length === 0 && result.stoppedReason !== "shutdown_requested",
-      detail: result,
+      name: "archive-outdated",
+      ok: true,
+      detail: { runId, ...detail },
     };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await dreamingRunRepo.markFailed(runId, message);
     return {
-      name: "time-update",
+      name: "archive-outdated",
       ok: false,
-      error: msg,
+      error: message,
+      detail: { runId },
     };
   }
 }
 
-async function stepDecisionContradiction(
-  signal?: AbortSignal,
-): Promise<DreamingStepResult> {
-  try {
-    const result = await detectDecisionContradictions({ signal });
-    return {
-      name: "decision-contradiction",
-      ok: result.stoppedReason !== "shutdown_requested",
-      detail: result,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return {
-      name: "decision-contradiction",
-      ok: false,
-      error: msg,
-    };
-  }
-}
-
-async function stepReflection(
-  sessionId: string,
-  signal?: AbortSignal,
-): Promise<DreamingStepResult> {
-  try {
-    const result = await reflectOnSession({ sessionId, signal });
-    return {
-      name: "reflection",
-      ok:
-        result.errors.length === 0 && result.stoppedReason !== "shutdown_requested",
-      detail: result,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return {
-      name: "reflection",
-      ok: false,
-      error: msg,
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main export
-// ---------------------------------------------------------------------------
-
-/**
- * Run one or more dreaming jobs.
- *
- * - Each step is wrapped in try/catch; failure continues to next step (best-effort).
- * - 'full' runs: promote-observations → synthesize → time-update → decision-contradiction.
- *   reflection is excluded from full because it requires an explicit sessionId.
- * - 'reflection' requires opts.sessionId; throws ValidationError if missing.
- */
-async function runDreamingInternal(
+async function runActiveDreaming(
   opts: DreamingRunOptions,
 ): Promise<DreamingRunResult> {
-  const {
-    job,
-    sessionId,
-    maxObservations = 50,
-    maxCaptures = 200,
-    maxMemories = 500,
-    maxUpdates = 50,
-    timeUpdateMaxRunMs,
-    timeUpdateMaxFailures,
-    timeUpdateMaxConsecutiveFailures,
-    timeUpdateStaleRunMs,
-    signal,
-  } = opts;
-
-  if (job === "reflection" && !sessionId) {
-    throw new ValidationError(
-      "runDreaming: sessionId is required for job='reflection'",
-    );
-  }
-
+  const { recoverStaleDreamingRuns } = await import("./recover.js");
   await recoverStaleDreamingRuns();
 
   const startedAt = new Date().toISOString();
-  const startMs = Date.now();
-  const steps: DreamingStepResult[] = [];
-
-  switch (job) {
+  const startedMs = Date.now();
+  let step: DreamingStepResult;
+  switch (opts.job) {
     case "promote-captures":
-      steps.push(await stepPromoteCaptures(maxCaptures, signal));
+      step = await stepPromoteCaptures(
+        opts.maxCaptures ?? 200,
+        opts.signal,
+      );
       break;
-
     case "sweep-captures":
-      steps.push(await stepSweepCaptures());
+      step = await stepSweepCaptures();
       break;
-
-    case "promote-observations":
-      steps.push(await stepPromoteObservations(maxObservations, signal));
+    case "archive-outdated":
+      step = await stepArchiveOutdated(opts.maxMemories ?? 500);
       break;
-
-    case "synthesize":
-      steps.push(await stepSynthesize(maxMemories, signal));
-      break;
-
-    case "time-update":
-      steps.push(
-        await stepTimeUpdate(maxMemories, maxUpdates, {
-          maxRunMs: timeUpdateMaxRunMs,
-          maxFailures: timeUpdateMaxFailures,
-          maxConsecutiveFailures: timeUpdateMaxConsecutiveFailures,
-          staleRunMs: timeUpdateStaleRunMs,
-          signal,
-        }),
-      );
-      break;
-
-    case "decision-contradiction":
-      steps.push(await stepDecisionContradiction(signal));
-      break;
-
-    case "reflection":
-      steps.push(await stepReflection(sessionId!, signal));
-      break;
-
-    case "full":
-      // Sequence: capture promotion → observation promotion → synthesize → time-update → decision-contradiction
-      steps.push(await stepPromoteCaptures(maxCaptures, signal));
-      if (signal?.aborted) break;
-      steps.push(await stepPromoteObservations(maxObservations, signal));
-      if (signal?.aborted) break;
-      steps.push(await stepSynthesize(maxMemories, signal));
-      if (signal?.aborted) break;
-      steps.push(
-        await stepTimeUpdate(maxMemories, maxUpdates, {
-          maxRunMs: timeUpdateMaxRunMs,
-          maxFailures: timeUpdateMaxFailures,
-          maxConsecutiveFailures: timeUpdateMaxConsecutiveFailures,
-          staleRunMs: timeUpdateStaleRunMs,
-          signal,
-        }),
-      );
-      if (signal?.aborted) break;
-      steps.push(await stepDecisionContradiction(signal));
-      break;
-
-    default: {
-      const _exhaustive: never = job;
-      throw new ValidationError(
-        `runDreaming: unknown job '${String(_exhaustive)}'`,
-      );
-    }
+    default:
+      return removedServerLlmResult(opts.job);
   }
 
-  const finishedAt = new Date().toISOString();
-  const durationMs = Date.now() - startMs;
-
-  // Record metrics: 'success' if every step succeeded, otherwise 'partial'
-  const allOk = steps.every((s) => s.ok);
-  dreamingRunDurationSeconds.observe({ job }, durationMs / 1000);
-  dreamingRunsTotal.inc({ job, status: allOk ? "success" : "partial" });
-
+  const durationMs = Date.now() - startedMs;
+  const { dreamingRunDurationSeconds, dreamingRunsTotal } = await import(
+    "../../lib/metrics.js"
+  );
+  dreamingRunDurationSeconds.observe({ job: opts.job }, durationMs / 1000);
+  dreamingRunsTotal.inc({
+    job: opts.job,
+    status: step.ok ? "success" : "partial",
+  });
   return {
-    job,
+    job: opts.job,
     startedAt,
-    finishedAt,
+    finishedAt: new Date().toISOString(),
     durationMs,
-    steps,
+    steps: [step],
   };
 }
 
-export function runDreaming(
+export async function runDreaming(
   opts: DreamingRunOptions,
 ): Promise<DreamingRunResult> {
-  return dreamingExecutionCoordinator.run(opts.job, opts.signal, (signal) =>
-    runDreamingInternal({ ...opts, signal }),
+  // Compatibility jobs must not load DB modules, recover stale runs, create a
+  // run record, claim durable work, or change retry/quarantine state.
+  if (REMOVED_SERVER_LLM_JOBS.has(opts.job)) {
+    return removedServerLlmResult(opts.job);
+  }
+  const { dreamingExecutionCoordinator } = await import("./execution.js");
+  return await dreamingExecutionCoordinator.run(
+    opts.job,
+    opts.signal,
+    (signal) => runActiveDreaming({ ...opts, signal }),
   );
 }

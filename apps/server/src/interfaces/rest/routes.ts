@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { AdminFilterQuery } from "@tsumugi/shared";
+import { AdminFilterQuery, TriggerDreamingInput } from "@tsumugi/shared";
+import { ZodError } from "zod";
 import { runDreaming } from "../../core/dreaming/runner.js";
 import { saveCapture } from "../../core/capture/save.js";
 import { getCaptureContinuity } from "../../core/capture/continuity.js";
@@ -13,6 +14,7 @@ import { memoryRepo } from "../../data/repos/memory.js";
 import { observationRepo } from "../../data/repos/observation.js";
 import { adminRepo, type AdminScope } from "../../data/repos/admin.js";
 import { getActiveScheduler } from "../mcp/transport-http.js";
+import { ValidationError } from "../../lib/errors.js";
 
 export const restApp = new Hono();
 
@@ -207,9 +209,17 @@ restApp.get("/search", async (c) => {
 });
 
 restApp.post("/dreaming/trigger", async (c) => {
-  const body = await c.req.json();
-  const result = await runDreaming(body);
-  return c.json(result);
+  try {
+    const body = TriggerDreamingInput.parse(await c.req.json());
+    const result = await runDreaming(body);
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json(
+      { error: message },
+      error instanceof ZodError || error instanceof ValidationError ? 400 : 500,
+    );
+  }
 });
 
 restApp.get("/dreaming/runs", async (c) => {

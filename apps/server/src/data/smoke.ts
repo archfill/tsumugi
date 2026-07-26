@@ -38,28 +38,17 @@ try {
     project_tag: "tsumugi-db-smoke",
     facts: null,
     metadata: null,
+    promotion_state: "completed",
+    promoted_at: new Date(),
   });
 
   const inserted = await observationRepo.findById(observationId);
   assert(inserted !== null, "observation inserted");
-  assert(inserted?.promoted_at === null, "new observation is not promoted");
-
-  const pendingBefore = await observationRepo.listPending(100);
   assert(
-    pendingBefore.some((row) => row.id === observationId),
-    "new observation appears in pending list",
+    inserted?.promotion_state === "completed",
+    "new observation bypasses removed server-LLM promotion",
   );
-
-  await observationRepo.markPromoted(observationId);
-
-  const promoted = await observationRepo.findById(observationId);
-  assert(promoted?.promoted_at instanceof Date, "promoted_at is recorded");
-
-  const pendingAfter = await observationRepo.listPending(100);
-  assert(
-    !pendingAfter.some((row) => row.id === observationId),
-    "promoted observation is excluded from pending list",
-  );
+  assert(inserted?.promoted_at instanceof Date, "promoted_at is recorded");
 
   await dreamingRunRepo.insert({
     id: dreamingRunId,

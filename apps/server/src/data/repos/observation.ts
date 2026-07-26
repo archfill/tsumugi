@@ -1,16 +1,9 @@
-import { and, desc, eq, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "../client.js";
 import { observations } from "../schema.js";
 
-export interface ObservationFactsPatch {
-  facts?: string[];
-  metadata?: Record<string, unknown>;
-}
-
 export type ObservationRow = typeof observations.$inferSelect;
 export type NewObservationRow = typeof observations.$inferInsert;
-
-export const OBSERVATION_PREPARATION_QUARANTINE_THRESHOLD = 5;
 
 export const observationRepo = {
   async insert(row: NewObservationRow): Promise<void> {
@@ -40,78 +33,6 @@ export const observationRepo = {
       sql`SELECT COUNT(*)::int AS n FROM observations`,
     );
     return Number(r.rows[0]?.n ?? 0);
-  },
-  // Durable promotion worker: oldest observations that still need fact rows.
-  async listPending(limit = 50): Promise<ObservationRow[]> {
-    return await db
-      .select()
-      .from(observations)
-      .where(
-        and(
-          isNull(observations.promoted_at),
-          eq(observations.promotion_state, "ready"),
-          lte(observations.promotion_next_attempt_at, new Date()),
-        ),
-      )
-      .orderBy(observations.created_at)
-      .limit(limit);
-  },
-  async markPromoted(id: string, promotedAt = new Date()): Promise<void> {
-    await db
-      .update(observations)
-      .set({
-        promoted_at: promotedAt,
-        promotion_state: "completed",
-        promotion_failure_count: 0,
-        promotion_next_attempt_at: promotedAt,
-        promotion_last_failure_at: null,
-        promotion_last_error: null,
-      })
-      .where(eq(observations.id, id));
-  },
-  async markSkipped(id: string, promotedAt = new Date()): Promise<void> {
-    await db
-      .update(observations)
-      .set({
-        promoted_at: promotedAt,
-        promotion_state: "skipped",
-        promotion_last_failure_at: null,
-        promotion_last_error: null,
-      })
-      .where(eq(observations.id, id));
-  },
-  async recordPromotionFailure(
-    row: ObservationRow,
-    error: string,
-  ): Promise<{ quarantined: boolean; updated: boolean }> {
-    const failureCount = row.promotion_failure_count + 1;
-    const quarantined =
-      failureCount >= OBSERVATION_PREPARATION_QUARANTINE_THRESHOLD;
-    const delayMs = Math.min(
-      24 * 60 * 60 * 1000,
-      60_000 * 2 ** Math.max(0, failureCount - 1),
-    );
-    const updated = await db
-      .update(observations)
-      .set({
-        promotion_state: quarantined ? "quarantined" : "ready",
-        promotion_failure_count: failureCount,
-        promotion_next_attempt_at: new Date(Date.now() + delayMs),
-        promotion_last_failure_at: new Date(),
-        promotion_last_error: error,
-      })
-      .where(
-        and(
-          eq(observations.id, row.id),
-          eq(observations.promotion_state, "ready"),
-          eq(
-            observations.promotion_failure_count,
-            row.promotion_failure_count,
-          ),
-        ),
-      )
-      .returning({ id: observations.id });
-    return { quarantined, updated: updated.length === 1 };
   },
   async listForSession(
     sessionId: string,
@@ -147,21 +68,5 @@ export const observationRepo = {
       .orderBy(desc(observations.created_at))
       .limit(1);
     return rows[0]?.project_tag ?? null;
-  },
-  async updateFactsAndMetadata(
-    id: string,
-    patch: ObservationFactsPatch,
-  ): Promise<void> {
-    await db
-      .update(observations)
-      .set({
-        ...(patch.facts !== undefined
-          ? { facts: patch.facts as unknown as never }
-          : {}),
-        ...(patch.metadata !== undefined
-          ? { metadata: patch.metadata as unknown as never }
-          : {}),
-      })
-      .where(eq(observations.id, id));
   },
 };

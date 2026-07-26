@@ -24,11 +24,12 @@ import {
 } from "./tools/search-memory.js";
 import { handleMarkMemoryOutdated } from "./tools/mark-memory-outdated.js";
 import { newId } from "../../lib/id.js";
-import { timeAwareMemoryUpdate } from "../../core/dreaming/time-update.js";
+import { runDreaming } from "../../core/dreaming/runner.js";
 
 let savedId: string | null = null;
 let otherProjectObservationId: string | null = null;
 let memoryId: string | null = null;
+let standaloneMemoryId: string | null = null;
 let passed = 0;
 let failed = 0;
 
@@ -92,6 +93,7 @@ async function run(): Promise<void> {
     console.log("\n--- memory/provenance fixtures ---");
     otherProjectObservationId = newId("obs");
     memoryId = newId("mem");
+    standaloneMemoryId = newId("mem");
     await db.insert(observations).values({
       id: otherProjectObservationId,
       content: "tsumugi MCP tools smoke other project observation",
@@ -105,6 +107,13 @@ async function run(): Promise<void> {
     await db.insert(memories).values({
       id: memoryId,
       narrative: "tsumugi MCP tools smoke provenance memory",
+      importance: 5.0,
+      kind: "general",
+      embedding: null,
+    });
+    await db.insert(memories).values({
+      id: standaloneMemoryId,
+      narrative: "standalone legacy recall marker cardinal-blue",
       importance: 5.0,
       kind: "general",
       embedding: null,
@@ -133,21 +142,26 @@ async function run(): Promise<void> {
       `saved observation appears in search hits (id: ${savedId ?? "?"})`,
     );
     assert(
-      memoryId !== null && hitIds.includes(memoryId),
-      `derived memory appears in project-aware search hits (id: ${memoryId ?? "?"})`,
+      memoryId !== null && !hitIds.includes(memoryId),
+      "directly-derived memory is suppressed when its observation is a candidate",
     );
     assert(
       !hitIds.includes(otherProjectObservationId ?? ""),
       "other project observation is excluded",
     );
-    const memoryHit = searchResult.hits.find((h) => h.id === memoryId);
+    const standaloneSearch = (await handleSearchMemory({
+      query: "standalone legacy recall marker cardinal-blue",
+      limit: 5,
+      filter: { project_tag: null },
+    })) as SearchMemoryResult;
     assert(
-      memoryHit?.provenance.some((p) => p.id === savedId) === true,
-      "memory hit includes source observation provenance",
+      standaloneMemoryId !== null &&
+        standaloneSearch.hits.some((hit) => hit.id === standaloneMemoryId),
+      "standalone legacy memory remains searchable by default",
     );
     console.log(`  hits: [${hitIds.join(", ")}]`);
 
-    // 5. mark_memory_outdated + time-update archive
+    // 5. mark_memory_outdated + deterministic archive maintenance
     console.log("\n--- mark_memory_outdated ---");
     const outdatedResult = await handleMarkMemoryOutdated({
       memory_id: memoryId,
@@ -160,13 +174,16 @@ async function run(): Promise<void> {
       .where(eq(memories.id, memoryId!));
     assert(marked[0]?.outdated_at instanceof Date, "outdated_at stored");
 
-    const timeUpdateResult = await timeAwareMemoryUpdate({
+    const archiveResult = await runDreaming({
+      job: "archive-outdated",
       maxMemories: 10,
-      maxUpdates: 0,
     });
+    const archivedOutdated = (
+      archiveResult.steps[0]?.detail as { archivedOutdated?: number }
+    )?.archivedOutdated ?? 0;
     assert(
-      timeUpdateResult.archivedOutdated >= 1,
-      "time-update archived outdated memory",
+      archivedOutdated >= 1,
+      "archive-outdated archived outdated memory",
     );
     const archived = await db
       .select()
@@ -184,6 +201,11 @@ async function run(): Promise<void> {
         .from(memories)
         .where(eq(memories.id, memoryId));
       assert(remaining.length === 0, "smoke memory deleted");
+    }
+    if (standaloneMemoryId) {
+      await db
+        .delete(memories)
+        .where(eq(memories.id, standaloneMemoryId));
     }
     if (otherProjectObservationId) {
       await db

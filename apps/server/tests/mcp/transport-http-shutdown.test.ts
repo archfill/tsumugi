@@ -60,12 +60,9 @@ describe("HTTP runtime shutdown", () => {
     const runtime = await startHttp(0, {
       scheduler: {
         enabled: true,
-        promoteCaptures: "0,30 * * * *",
-        promoteObservations: "",
+        promoteCaptures: "*/5 * * * *",
         sweepCaptures: "",
-        synthesize: "",
-        timeUpdate: "",
-        decisionContradiction: "",
+        archiveOutdated: "",
       },
       shutdownDrainTimeoutMs: 45_000,
     });
@@ -84,23 +81,20 @@ describe("HTTP runtime shutdown", () => {
 
   it("returns by the deadline when HTTP close remains pending", async () => {
     serverMock.close.mockImplementation(() => undefined);
-    coordinatorMock.getRunningJobs.mockReturnValue(["synthesize"]);
+    coordinatorMock.getRunningJobs.mockReturnValue(["promote-captures"]);
     const runtime = await startHttp(0, {
       scheduler: {
         enabled: true,
         promoteCaptures: "",
-        promoteObservations: "",
         sweepCaptures: "",
-        synthesize: "",
-        timeUpdate: "",
-        decisionContradiction: "",
+        archiveOutdated: "",
       },
       shutdownDrainTimeoutMs: 5,
     });
 
     await expect(runtime.shutdown()).resolves.toEqual({
       drained: false,
-      runningJobs: ["synthesize"],
+      runningJobs: ["promote-captures"],
     });
     expect(serverMock.closeIdleConnections).toHaveBeenCalledOnce();
     expect(serverMock.closeAllConnections).toHaveBeenCalledOnce();
@@ -111,11 +105,8 @@ describe("HTTP runtime shutdown", () => {
       scheduler: {
         enabled: false,
         promoteCaptures: "",
-        promoteObservations: "",
         sweepCaptures: "",
-        synthesize: "",
-        timeUpdate: "",
-        decisionContradiction: "",
+        archiveOutdated: "",
       },
       shutdownDrainTimeoutMs: 45_000,
     });

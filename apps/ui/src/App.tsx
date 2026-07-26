@@ -355,8 +355,8 @@ function OverviewView({ filters }: { filters: Filters }) {
             <strong>{overview.data.attention_count.toLocaleString()}</strong>
           </header>
           <p>
-            現在retryまたはreviewが必要なquarantine、期限到来済みdefer、stale
-            lease、outdatedの合計です。
+            deterministic Stop windowのretry、staleなactive worker、outdated
+            memoryだけを集計します。旧LLM queueはread-only履歴です。
           </p>
           <div className="history-count">
             <span>History</span>
@@ -375,7 +375,9 @@ function OverviewView({ filters }: { filters: Filters }) {
           <div className="queue-list">
             {overview.data.queues.map((queue) => (
               <div key={queue.stage}>
-                <strong>{queue.stage}</strong>
+                <strong>
+                  {queue.stage === "fact" ? "fact (legacy read-only)" : queue.stage}
+                </strong>
                 <span>{queue.total.toLocaleString()} total</span>
                 <span>oldest {formatTime(queue.oldest_actionable_at)}</span>
                 <div className="state-line compact">
@@ -394,7 +396,11 @@ function OverviewView({ filters }: { filters: Filters }) {
           <header className="panel-heading">
             <div>
               <p className="eyebrow">Scheduler</p>
-              <h3>{overview.data.scheduler.enabled ? "6-job clock" : "Disabled"}</h3>
+              <h3>
+                {overview.data.scheduler.enabled
+                  ? `${overview.data.scheduler.jobs.length}-job clock`
+                  : "Disabled"}
+              </h3>
             </div>
           </header>
           <div className="schedule-list">
@@ -618,7 +624,7 @@ function MemoryDetail({
               : memory.outdated_at
                 ? "outdated"
                 : memory.llm_quarantined_at
-                  ? "quarantined"
+                  ? "legacy-quarantined"
                   : "active"
           }
         />
@@ -772,7 +778,7 @@ function MemoriesView({
                   : memory.outdated_at
                     ? "outdated"
                     : memory.llm_quarantined_at
-                      ? "quarantined"
+                      ? "legacy-quarantined"
                       : "active";
                 return (
                   <button
@@ -898,7 +904,7 @@ function OperationsView({ filters }: { filters: Filters }) {
         <div className="issue-list">
           {issueRows.map((issue) => {
             const retryable =
-              ["window", "fact", "observation"].includes(issue.kind) &&
+              issue.kind === "window" &&
               ["deferred", "quarantined"].includes(issue.state);
             const retrying =
               retryIssue.isPending && retryIssue.variables?.id === issue.id;

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../client.js";
-import { dreamingRuns } from "../schema.js";
+import { dreamingRuns, memories } from "../schema.js";
 import { TsumugiError } from "../../lib/errors.js";
 
 export type DreamingRunRow = typeof dreamingRuns.$inferSelect;
@@ -91,6 +91,50 @@ export const dreamingRunRepo = {
       .where(ownedNonTerminal(id))
       .returning({ id: dreamingRuns.id });
     assertTerminalOwnership(rows, id);
+  },
+  /**
+   * Atomically archive a bounded outdated-memory batch and finish its run.
+   * If the owned terminal update fails, throwing from this transaction rolls
+   * back the memory UPDATE as well.
+   */
+  async archiveOutdatedAndMarkCompleted(
+    id: string,
+    limit: number,
+  ): Promise<{ archivedOutdated: number; memoryIds: string[] }> {
+    return await db.transaction(async (tx) => {
+      const archivedRows = await tx
+        .update(memories)
+        .set({ archived_at: sql`now()` })
+        .where(
+          and(
+            isNull(memories.archived_at),
+            isNotNull(memories.outdated_at),
+            sql`${memories.id} IN (
+              SELECT id FROM ${memories}
+              WHERE archived_at IS NULL
+                AND outdated_at IS NOT NULL
+              ORDER BY outdated_at DESC
+              LIMIT ${limit}
+            )`,
+          ),
+        )
+        .returning({ id: memories.id });
+      const memoryIds = archivedRows.map((row) => row.id);
+      const archivedOutdated = memoryIds.length;
+      const metadata = { archivedOutdated, memoryIds };
+      const runRows = await tx
+        .update(dreamingRuns)
+        .set({
+          status: "completed",
+          finished_at: sql`now()`,
+          output_count: archivedOutdated,
+          metadata,
+        })
+        .where(ownedNonTerminal(id))
+        .returning({ id: dreamingRuns.id });
+      assertTerminalOwnership(runRows, id);
+      return metadata;
+    });
   },
   async markPartial(
     id: string,

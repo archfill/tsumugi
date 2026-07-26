@@ -71,6 +71,35 @@ export const captureRepo = {
       .orderBy(asc(captures.captured_at))
       .limit(limit);
   },
+  async listReadyStops(limit = 200): Promise<CaptureRow[]> {
+    return await db
+      .select()
+      .from(captures)
+      .where(
+        and(
+          eq(captures.hook_event, "Stop"),
+          isNull(captures.promoted_to_obs_id),
+          isNull(captures.skip_reason),
+          eq(captures.promotion_state, "ready"),
+        ),
+      )
+      .orderBy(asc(captures.captured_at))
+      .limit(limit);
+  },
+  async skipEmptyStop(id: string): Promise<boolean> {
+    const result = await db
+      .update(captures)
+      .set({ skip_reason: "empty_continuity_content", promotion_state: "skipped" })
+      .where(
+        and(
+          eq(captures.id, id),
+          eq(captures.hook_event, "Stop"),
+          eq(captures.promotion_state, "ready"),
+        ),
+      )
+      .returning({ id: captures.id });
+    return result.length === 1;
+  },
   async assignWindow(windowId: string, captureIds: string[]): Promise<void> {
     if (captureIds.length === 0) return;
     await db
@@ -88,6 +117,18 @@ export const captureRepo = {
       .select()
       .from(captures)
       .where(eq(captures.promotion_window_id, windowId))
+      .orderBy(asc(captures.captured_at));
+  },
+  async listActiveForWindow(windowId: string): Promise<CaptureRow[]> {
+    return await db
+      .select()
+      .from(captures)
+      .where(
+        and(
+          eq(captures.promotion_window_id, windowId),
+          eq(captures.promotion_state, "windowed"),
+        ),
+      )
       .orderBy(asc(captures.captured_at));
   },
   async listContinuityCandidates(params: {

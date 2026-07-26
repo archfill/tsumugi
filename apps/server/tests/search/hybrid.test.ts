@@ -5,6 +5,7 @@ const bigmSearchMock = vi.hoisted(() => vi.fn());
 const vectorSearchMock = vi.hoisted(() => vi.fn());
 const filterMemoryHitsByProjectTagMock = vi.hoisted(() => vi.fn());
 const attachProvenanceMock = vi.hoisted(() => vi.fn());
+const preferObservationCandidatesMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../src/external/embedding/singleton.js", () => ({
   getEmbedder: () => ({
@@ -23,6 +24,7 @@ vi.mock("../../src/core/search/vector.js", () => ({
 vi.mock("../../src/core/search/provenance.js", () => ({
   filterMemoryHitsByProjectTag: filterMemoryHitsByProjectTagMock,
   attachProvenance: attachProvenanceMock,
+  preferObservationCandidates: preferObservationCandidatesMock,
 }));
 
 const { hybridSearch } = await import("../../src/core/search/hybrid.js");
@@ -39,6 +41,7 @@ describe("hybridSearch layer selection", () => {
     filterMemoryHitsByProjectTagMock.mockImplementation((hits) =>
       Promise.resolve(hits),
     );
+    preferObservationCandidatesMock.mockImplementation((hits) => Promise.resolve(hits));
     attachProvenanceMock.mockImplementation((hits) =>
       Promise.resolve(
         hits.map((hit: Record<string, unknown>) => ({
@@ -117,5 +120,30 @@ describe("hybridSearch layer selection", () => {
       [],
       "tsumugi",
     );
+  });
+
+  it("fused全候補へslice前にpolicyを適用し、独立候補でbackfillしてfinalだけprovenance付与する", async () => {
+    bigmSearchMock.mockResolvedValueOnce([
+      { id: "obs_1", layer: "observation", excerpt: "o", score: 1 },
+      { id: "mem_linked", layer: "memory", excerpt: "m", score: 0.9 },
+      { id: "mem_independent", layer: "memory", excerpt: "i", score: 0.8 },
+    ]).mockResolvedValueOnce([]);
+    preferObservationCandidatesMock.mockImplementationOnce(async (hits) =>
+      hits.filter((hit: { id: string }) => hit.id !== "mem_linked"),
+    );
+
+    await hybridSearch({ query: "q", limit: 2 });
+
+    expect(preferObservationCandidatesMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "obs_1" }),
+        expect.objectContaining({ id: "mem_linked" }),
+        expect.objectContaining({ id: "mem_independent" }),
+      ]),
+    );
+    expect(attachProvenanceMock).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "obs_1" }),
+      expect.objectContaining({ id: "mem_independent" }),
+    ]);
   });
 });

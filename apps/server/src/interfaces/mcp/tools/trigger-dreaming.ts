@@ -1,12 +1,10 @@
-import {
-  runDreaming,
-  type DreamingJob,
-} from "../../../core/dreaming/runner.js";
+import { TriggerDreamingInput } from "@tsumugi/shared/schema";
+import { runDreaming } from "../../../core/dreaming/runner.js";
 
 export const TRIGGER_DREAMING_TOOL = {
   name: "trigger_dreaming",
   description:
-    "tsumugi の dreaming worker を手動起動する。job 指定で個別 / 全部 を切替。",
+    "決定論的maintenanceを手動起動する。旧server-LLM job名は互換no-op。",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -15,6 +13,7 @@ export const TRIGGER_DREAMING_TOOL = {
         enum: [
           "promote-captures",
           "sweep-captures",
+          "archive-outdated",
           "promote-observations",
           "synthesize",
           "time-update",
@@ -23,39 +22,59 @@ export const TRIGGER_DREAMING_TOOL = {
           "full",
         ],
         description:
-          "どの dreaming タスクを動かすか。reflection は sessionId 必須、full はそれ以外を順次実行。",
+          "どの dreaming タスクを動かすか。promote-captures / sweep-captures / archive-outdated が実行対象。promote-observations / synthesize / time-update / decision-contradiction / reflection / full は廃止済みとして no-op で返す。reflection は互換入力として sessionId 必須。",
       },
       sessionId: {
         type: "string",
-        description: "reflection の対象 session ID",
+        description: "廃止済みreflection互換入力。実行には使用しない。",
+      },
+      maxCaptures: {
+        type: "integer",
+        minimum: 1,
+        maximum: 500,
+        description: "promote-captures の上限 (default 200)",
       },
       maxObservations: {
-        type: "number",
-        description: "promote-observations の上限 (default 50)",
+        type: "integer",
+        minimum: 1,
+        maximum: 500,
+        description: "廃止済みpromote-observations互換入力。実行には使用しない。",
       },
       maxMemories: {
-        type: "number",
-        description: "synthesize / time-update 共通の上限 (default 500)",
+        type: "integer",
+        minimum: 1,
+        maximum: 500,
+        description: "archive-outdated上限。旧synthesize/time-updateでは使用しない。",
       },
       maxUpdates: {
-        type: "number",
-        description: "time-update の更新数上限 (default 50)",
+        type: "integer",
+        minimum: 0,
+        maximum: 500,
+        description: "廃止済みtime-update互換入力。実行には使用しない。",
       },
       timeUpdateMaxRunMs: {
-        type: "number",
-        description: "time-update の実行時間上限 ms (default 30分)",
+        type: "integer",
+        minimum: 1,
+        maximum: 86400000,
+        description: "廃止済みtime-update互換入力。実行には使用しない。",
       },
       timeUpdateMaxFailures: {
-        type: "number",
-        description: "time-update の失敗数上限 (default 10)",
+        type: "integer",
+        minimum: 0,
+        maximum: 100,
+        description: "廃止済みtime-update互換入力。実行には使用しない。",
       },
       timeUpdateMaxConsecutiveFailures: {
-        type: "number",
-        description: "time-update の連続失敗数上限 (default 5)",
+        type: "integer",
+        minimum: 0,
+        maximum: 100,
+        description: "廃止済みtime-update互換入力。実行には使用しない。",
       },
       timeUpdateStaleRunMs: {
-        type: "number",
-        description: "running run を stale とみなす経過時間 ms (default 2時間)",
+        type: "integer",
+        minimum: 1,
+        maximum: 604800000,
+        description: "廃止済みtime-update互換入力。実行には使用しない。",
       },
     },
     required: ["job"],
@@ -64,19 +83,6 @@ export const TRIGGER_DREAMING_TOOL = {
 } as const;
 
 export async function handleTriggerDreaming(rawInput: unknown) {
-  const input = rawInput as {
-    job: DreamingJob;
-    sessionId?: string;
-    maxObservations?: number;
-    maxMemories?: number;
-    maxUpdates?: number;
-    timeUpdateMaxRunMs?: number;
-    timeUpdateMaxFailures?: number;
-    timeUpdateMaxConsecutiveFailures?: number;
-    timeUpdateStaleRunMs?: number;
-  };
-  if (!input?.job) {
-    throw new Error("job is required");
-  }
+  const input = TriggerDreamingInput.parse(rawInput);
   return await runDreaming(input);
 }

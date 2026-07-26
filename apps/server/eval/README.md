@@ -1,90 +1,16 @@
-# Tsumugi 評価ベンチ
+# Search evaluation
 
-## 目的
-
-dreaming pipeline 各ジョブ (AUDN / promote / search / contradiction / time-update) と LLM resilience の品質を、**合成 fixture + yui 由来 private fixture** の双方で測定する。
-
-実運用前に「既知の型のエッジケース」をすべて潰すための仕組み。
-
-## ディレクトリ
-
-```
-eval/
-├── README.md              # この文書
-├── types.ts               # FixtureCase / BenchOutcome / BenchSummary
-├── runner.ts              # bench 共通実行基盤 (case → outcome → summary)
-├── report.ts              # 結果の表形式出力 + JSON 永続化
-├── load-private.ts        # fixtures-private/ から動的 import (存在しなければ無視)
-├── cli.ts                 # `pnpm bench` から呼ばれる entry
-├── fixtures/              # 公開 fixture (commit OK)
-│   ├── audn.synthetic.ts
-│   ├── promote.synthetic.ts
-│   ├── search.synthetic.ts
-│   ├── contradiction.synthetic.ts
-│   └── time-update.synthetic.ts
-├── fixtures-private/      # yui 由来 fixture (.gitignore で除外、ローカルのみ)
-│   └── *.ts               # seed-from-yui.ts が出力
-├── runners/               # 各ジョブのベンチ
-│   ├── audn.bench.ts
-│   ├── audn-batch.bench.ts
-│   ├── audn.fixtures.ts
-│   ├── audn.metrics.ts
-│   ├── promote.bench.ts
-│   ├── search.bench.ts
-│   ├── contradiction.bench.ts
-│   └── time-update.bench.ts
-├── seed-from-yui.ts       # yui DB → fixtures-private/ 抽出スクリプト
-└── results/               # 過去ベンチ結果 JSON (.gitignore)
-```
-
-## 実行
+`search` bench は、合成 fixture と disposable PostgreSQL を使って hybrid
+search の precision / recall を測定する。実行には `DATABASE_URL` が必要で、
+seed memoryを作成・削除するため本番DBでは実行しない。
 
 ```bash
-# 全ベンチ
-mise run -C apps/server bench
-
-# 個別
-mise run -C apps/server bench-audn
-mise run -C apps/server bench-audn-synthetic
-mise run -C apps/server bench-audn-private-sample
-mise run -C apps/server bench-audn-batch
-mise run -C apps/server bench-audn-batch-synthetic
-mise run -C apps/server bench-audn-batch-private-sample
-mise run -C apps/server bench-audn-batch2-synthetic
-mise run -C apps/server bench-promote
+pnpm bench:search
+# または
 mise run -C apps/server bench-search
-mise run -C apps/server bench-contradiction
-mise run -C apps/server bench-time-update
-
-# yui DB からの fixture 抽出（初回 / 定期更新）
-YUI_DATABASE_URL=postgresql://postgres:***@... mise run -C apps/server eval-seed
 ```
 
-## 評価指標
-
-| ベンチ        | 主要メトリクス                                                         |
-| ------------- | ---------------------------------------------------------------------- |
-| AUDN          | confusion matrix, per-class F1 (ADD/UPDATE/DELETE/NOOP)                |
-| AUDN batch    | AUDN指標 + batch size 3での論理LLM call削減率                       |
-| promote       | precision, recall (skip vs keep), 誤判定リスト                         |
-| search        | top-k recall, MRR                                                      |
-| contradiction | precision, recall, 見逃しリスト                                        |
-| time-update   | narrative cosine similarity (BGE-M3 self-eval)                         |
-| resilience    | vitest pass/fail (mock fetch で 5xx/429/empty/content_filter 等を再現) |
-
-`audn-batch` は本番workerと同じbatch judgeの品質gateで、外部LLMの明示的な実行に限定するため
-引数なしの全ベンチには含めない。既存AUDNと同じfixtureをdecisionが混在する3件単位に
-並べ替え、fact間の干渉とcall削減率を測る。
-`*-synthetic` は `fixtures-private` を読み込まず、公開fixtureだけで安全かつ低コストに
-同条件のA/B比較を行う入口とする。
-`audn-batch2-synthetic` はprovider timeoutとのtrade-off確認用にbatch size 2で実行する。
-`*-private-sample` はprivate fixtureをstable hashで存在するdecisionごとに5件抽出し、
-最大20件の同一sampleを単件/batchで比較する。全件を毎回外部LLMへ送らず、固定sampleで
-回帰を追える。
-
-## fixture 追加方針
-
-- **公開 fixture (`fixtures/`)**: tsumugi の機能境界を網羅する合成例。OSS ユーザーが触れる例。
-- **private fixture (`fixtures-private/`)**: yui の実運用ログ。**コミット禁止**。本番品質測定の正。
-
-新ケースを追加するときは、まず「期待値（正解ラベル）」が一意に決まるか確認する。曖昧な場合は `tags: ["ambiguous"]` を付けて評価から除外、または別バケットで集計する。
+任意のprivate fixtureはgitignoredの`eval/fixtures-private/search.private.ts`へ
+置く。raw query・narrative・検索結果はcommitやIssueへ出さず、共有するのは
+Recall@1/5・MRR・latencyなどの集計値だけとする。server LLM用の評価runnerは
+廃止済みで、provider API keyは不要。

@@ -14,6 +14,7 @@ export async function saveObservation(
   const embedding = await getEmbedder().embed(input.content);
 
   const id = newId("obs");
+  const savedAt = new Date();
   await observationRepo.insert({
     id,
     content: input.content,
@@ -24,6 +25,8 @@ export async function saveObservation(
     facts: input.facts ?? null,
     metadata: input.metadata ?? null,
     embedding: Array.from(embedding),
+    promotion_state: "completed",
+    promoted_at: savedAt,
   });
 
   return { id };

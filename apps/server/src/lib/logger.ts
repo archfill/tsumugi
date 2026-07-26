@@ -10,7 +10,7 @@
  *
  * 使い方:
  *   import { logger } from "../lib/logger.js";
- *   logger.info({ tier, model }, "LLM call started");
+ *   logger.info({ job, runId }, "deterministic worker started");
  *   const child = logger.child({ runId: "drun_xxx" });
  *   child.warn({ attempt, delayMs }, "retry");
  */

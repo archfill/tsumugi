@@ -4,8 +4,7 @@
  * Exposes:
  *   - default Node.js process metrics (CPU, heap, event-loop lag, etc.)
  *   - HTTP request counters / histograms
- *   - LLM call counters / histograms
- *   - Dreaming run counters / histograms
+ *   - deterministic worker run counters / histograms
  *   - Embedder call counters / histograms
  *   - Memory/observation gauges populated lazily on scrape
  *
@@ -44,40 +43,7 @@ export const httpRequestDurationSeconds = new Histogram({
 });
 
 // ---------------------------------------------------------------------------
-// LLM
-// ---------------------------------------------------------------------------
-
-export const llmCallsTotal = new Counter({
-  name: "tsumugi_llm_calls_total",
-  help: "Total number of LLM calls by tier, provider, model, and status.",
-  labelNames: ["tier", "provider", "model", "status"] as const,
-  registers: [registry],
-});
-
-export const llmCallDurationSeconds = new Histogram({
-  name: "tsumugi_llm_call_duration_seconds",
-  help: "LLM call duration in seconds by tier, provider, and model.",
-  labelNames: ["tier", "provider", "model"] as const,
-  buckets: [0.5, 1, 2, 5, 10, 20, 30, 60, 120],
-  registers: [registry],
-});
-
-export const llmRetriesTotal = new Counter({
-  name: "tsumugi_llm_retries_total",
-  help: "Total number of LLM retry attempts by tier and reason.",
-  labelNames: ["tier", "reason"] as const,
-  registers: [registry],
-});
-
-export const llmCircuitEventsTotal = new Counter({
-  name: "tsumugi_llm_circuit_events_total",
-  help: "Total number of provider circuit breaker state transitions.",
-  labelNames: ["provider", "event"] as const,
-  registers: [registry],
-});
-
-// ---------------------------------------------------------------------------
-// Dreaming
+// Deterministic worker (metric names retained for dashboard compatibility)
 // ---------------------------------------------------------------------------
 
 export const dreamingRunsTotal = new Counter({
@@ -133,7 +99,7 @@ export const observationsTotal = new Gauge({
 
 export const observationsPending = new Gauge({
   name: "tsumugi_observations_pending",
-  help: "Number of observations not yet summarized (promoted_at IS NULL).",
+  help: "Historical observations with promoted_at IS NULL; no automatic semantic worker consumes this state.",
   registers: [registry],
 });
 
@@ -146,7 +112,7 @@ export const memoriesTotal = new Gauge({
 
 export const memoriesQuarantined = new Gauge({
   name: "tsumugi_memories_quarantined",
-  help: "Number of memories quarantined due to repeated LLM failures.",
+  help: "Historical memories carrying the retired LLM quarantine marker.",
   registers: [registry],
 });
 

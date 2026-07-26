@@ -1,11 +1,9 @@
 /**
- * Optional loader for private (yui-derived) fixtures.
+ * Optional loader for private search fixtures.
  *
- * Private fixtures live under `eval/fixtures-private/` and are .gitignore'd.
- * If the file is missing, return an empty array so the bench still runs on
- * synthetic data alone.
+ * Private fixtures live under `eval/fixtures-private/` and are gitignored. If
+ * a file is absent, the bench continues with public synthetic data only.
  */
-
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
