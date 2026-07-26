@@ -1,6 +1,7 @@
 # ADR-013: search_memory のデフォルト project_tag filter + provenance surface + mark_memory_outdated MCP
 
 - 日付: 2026-06-17
+- 最終更新: 2026-07-27
 - ステータス: Accepted
 - 影響 ADR: なし (ADR-003 と整合、ADR-011 と独立)
 
@@ -165,7 +166,7 @@ derived 元 observation の `project_tag` が filter と一致する memory は�
 - project-aware memory filter は RRF 前にかけ、response provenance attach は RRF 後
   `limit` trim 後に実行する
 
-これにより Phase 1 の observation recall 改善を維持しつつ、Layer 2 memory も
+これにより Phase 1 の observation recall 改善を維持しつつ、Layer 3 memory も
 project 文脈に沿って recall に参加できるようにする。
 
 ### 3. C: `mark_memory_outdated` MCP tool 追加
@@ -242,6 +243,6 @@ deterministic soft archive 対象にする signal である。
 - ADR-001 (Two-layer architecture) ← layer 構造の根拠 (ADR-014 で Three-layer 化)
 - ADR-003 (thin tool / client LLM delegation) ← search_memory の hot path 性質、本 ADR で LLM 呼出は追加しない
 - ADR-011 (hook-llm-placement) ← inject-only 原則、本 ADR とは独立
-- ADR-012 (Proposed, milestone-event save nudge) ← 補助手段、本 ADR とは独立
-- ADR-014 (Proposed, Three-layer 化) ← 同時並走、本 ADR は ADR-014 と独立に merge 可能
+- ADR-012 (milestone-event save nudge) ← 補助手段、本 ADR とは独立
+- ADR-014 (Three-layer 化) ← observation / memoryの現行layer定義
 - `docs/research/2026-06-17-agent-memory-landscape.md` §5 / §5.1 ← 本 ADR の起案根拠と recall 実証データ

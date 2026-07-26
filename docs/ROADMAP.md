@@ -1,7 +1,7 @@
 # tsumugi — ROADMAP
 
 - 種別: operational view
-- 最終更新: 2026-07-26
+- 最終更新: 2026-07-27
 - 判断軸: [`VISION.md`](./VISION.md) の capture / recall / forgetting / transparency / continuity
 
 実装状況、完了済み移行、次の優先順位はこのファイルだけで管理する。
@@ -12,7 +12,7 @@ README は概要と本ファイルへの導線に限定する。意思決定と 
 
 | # | ADR | 実装状況 |
 | --- | --- | --- |
-| 001 | [Two-layer architecture](./adr/0001-two-layer-architecture.md) | ADR-014 で Three-layer へ拡張 |
+| 001 | [Two-layer architecture](./adr/0001-two-layer-architecture.md) | ADR-014 で Three-layer へ置換済み |
 | 002 | [Hybrid search](./adr/0002-hybrid-search-pgbigm-pgvector.md) | 実装済み |
 | 003 | [Server-wide zero LLM / client delegation](./adr/0003-thin-tool-client-llm-delegation.md) | 外部 LLM runtime 撤去済み |
 | 004 | [TypeScript monorepo](./adr/0004-typescript-fullstack-monorepo.md) | 実装済み |
@@ -48,7 +48,12 @@ README は概要と本ファイルへの導線に限定する。意思決定と 
 - observation と legacy / curated memory を BGE-M3 + pg_bigm + RRF で検索する
 - 同じ候補 observation から直接派生した memory hit だけを重複抑制する
 - standalone / unlinked / curated memory は引き続き検索できる
-- provenance、source、project、timestamp、outdated を結果へ付与する
+- 結果は `layer` / `id` / `excerpt` / `score` / `tags` と、関連entityの
+  `layer` / `id` / `relation` / `created_at` を含む `provenance` を返す
+- `source` / `session_id` / `type` はobservation-only filter、`project_tag` は
+  observationと `derived_from` provenanceで関連付いたmemoryに適用する
+- `outdated` はmark / archive経路で管理する（filterとoutdated stateはいずれも
+  `SearchHit` の直接fieldではない）
 
 ### Maintenance
 

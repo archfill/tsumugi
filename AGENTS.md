@@ -8,7 +8,7 @@
 | ------------- | ------------------------ | --------------------------------- |
 | `core/`       | ビジネスロジック（純粋） | use case、検索アルゴリズム        |
 | `data/`       | 永続化                   | Drizzle schema、repository        |
-| `external/`   | 外部 I/O                 | embedding、LLM クライアント       |
+| `external/`   | 外部 I/O                 | embeddingなどの非LLMアダプタ      |
 | `interfaces/` | 入力アダプタ             | MCP tool、REST handler、transport |
 | `lib/`        | 横断ユーティリティ       | id、errors、config                |
 
@@ -16,44 +16,8 @@
 
 逆方向の import 禁止（lib は循環依存禁止）。
 
-```
-apps/server/src/
-├── index.ts                       # entrypoint
-├── core/                          # 純粋ビジネスロジック
-│   ├── observation/
-│   │   └── save.ts                # saveObservation use case
-│   └── search/                    # 検索系（hybrid/bigm/vector/rrf）
-│       ├── hybrid.ts
-│       ├── bigm.ts
-│       ├── vector.ts
-│       ├── rrf.ts
-│       └── smoke.ts
-├── data/                          # 永続化層
-│   ├── client.ts                  # pg Pool + drizzle
-│   ├── schema.ts                  # Drizzle 4 テーブル
-│   └── repos/
-│       └── observation.ts         # observation の CRUD ラッパ
-├── external/                      # 外部 I/O 層
-│   └── embedding/
-│       ├── bge.ts                 # createBgeEmbedder()
-│       ├── singleton.ts           # getEmbedder()
-│       └── smoke.ts
-├── interfaces/                    # 入力アダプタ層
-│   ├── mcp/
-│   │   ├── server.ts
-│   │   ├── transport-stdio.ts
-│   │   ├── transport-http.ts
-│   │   ├── smoke.ts
-│   │   └── tools/
-│   │       ├── save-observation.ts
-│   │       └── search-memory.ts
-│   └── rest/
-│       └── routes.ts
-└── lib/                           # 横断ユーティリティ
-    ├── id.ts
-    ├── errors.ts
-    └── config.ts
-```
+詳細なファイル一覧はソースツリーを正とし、このガイドでは固定しない。新しい機能も上記の
+依存方向と責務に従って配置する。`external/llm/` や同等のserver-side LLM clientは作らない。
 
 ## 既存資産（再実装禁止）
 
@@ -139,7 +103,7 @@ throw new ValidationError("content is required");
 
 ## ファイル命名
 
-- use case: `<verb>.ts`（save.ts, search.ts, synthesize.ts）
+- use case: `<verb>.ts`（save.ts, search.ts, promote.ts, archive.ts）
 - repo: `<entity>.ts`（observation.ts, memory.ts）
 - ヘルパ: 役割名（id.ts, errors.ts, config.ts）
 
@@ -157,19 +121,27 @@ throw new ValidationError("content is required");
 | [`docs/VISION.md`](docs/VISION.md)   | 上位の判断軸 (品質駆動、5 軸、原則、scope 外)                       |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **実装状況と優先順位の俯瞰**。「次に何をするか」はここ               |
 | `docs/adr/`                          | 個別の不変決定と lifecycle status の唯一の更新先                    |
-| `docs/research/`                     | 調査メモ、ADR 起案前の素材                                          |
+| `docs/research/`                     | 調査メモ、ADR 起案前のhistorical素材。実装contractには使わない       |
 
 設計判断に影響しそうな実装をする前は、**`VISION.md` の 5 品質軸** (capture / recall /
 forgetting / transparency / continuity) を判断基準として参照する。
+Superseded / historical ADRやresearchだけを根拠に現行挙動を実装しない。
 
 主要 ADR (全一覧は `ROADMAP.md` 参照):
 
-- ADR-001: 二層構造 (ADR-014 で Three-layer に拡張予定)
+- ADR-001: 旧二層構造 (ADR-014 で Three-layer に置換済み)
 - ADR-002: pg_bigm + pgvector hybrid 検索
-- ADR-003: hot path LLM ゼロ (クライアント LLM 委譲)
-- ADR-011: Hook は inject-only (ADR-014 で部分撤回予定)
-- ADR-013: search_memory default filter + provenance + outdated (Accepted)
-- ADR-014: Three-layer 化 (capture / observation / memory) (Proposed)
+- ADR-003: server-wide LLM ゼロ (意味判断はクライアントへ委譲)
+- ADR-011: inject-only 原則 (Stop capture 部分は ADR-014 で置換済み)
+- ADR-013: search_memory default filter + provenance + outdated
+- ADR-014: Three-layer 化 (capture / observation / memory)
+
+現行のarchitecture contract:
+
+- Layer 2 observationをcanonical sourceとする
+- Layer 3 memoryはlegacyまたは明示curated用で、自動生成を必須にしない
+- serverはMCP / REST / scheduled jobのいずれからも外部LLMを呼ばない
+- 自動jobはsemantic contentを書き換えない
 
 ## Subagent 協調
 

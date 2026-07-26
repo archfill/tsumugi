@@ -1,14 +1,14 @@
 # Require confirmation for tsumugi commands that can mutate a database, contact
-# a private runtime or external LLM, or start a stateful dreaming/eval workflow.
+# a private runtime, or start a stateful smoke, archive, migration, or eval workflow.
 
 prefix_rule(
-    pattern = ["pnpm", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    pattern = ["pnpm", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "memory:audit", "memory:audit:dev", "memory:archive", "memory:archive:dev", "capture:retire-legacy", "capture:retire-legacy:dev", "bench", "bench:search"]],
     decision = "prompt",
-    justification = "This tsumugi script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    justification = "This tsumugi script may access or mutate a database or private runtime. Confirm the target and scope first.",
     match = [
         "pnpm db:migrate",
-        "pnpm dream:full",
-        "pnpm bench:promote",
+        "pnpm memory:archive",
+        "pnpm bench:search",
     ],
     not_match = [
         "pnpm typecheck",
@@ -18,12 +18,12 @@ prefix_rule(
 )
 
 prefix_rule(
-    pattern = ["pnpm", "run", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    pattern = ["pnpm", "run", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "memory:audit", "memory:audit:dev", "memory:archive", "memory:archive:dev", "capture:retire-legacy", "capture:retire-legacy:dev", "bench", "bench:search"]],
     decision = "prompt",
-    justification = "This tsumugi script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    justification = "This tsumugi script may access or mutate a database or private runtime. Confirm the target and scope first.",
     match = [
         "pnpm run db:migrate",
-        "pnpm run llm:smoke",
+        "pnpm run memory:audit",
     ],
     not_match = [
         "pnpm run typecheck",
@@ -32,13 +32,13 @@ prefix_rule(
 )
 
 prefix_rule(
-    pattern = ["pnpm", ["-C", "--filter"], ["apps/server", "@tsumugi/server"], ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    pattern = ["pnpm", ["-C", "--filter"], ["apps/server", "@tsumugi/server"], ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "memory:audit", "memory:audit:dev", "memory:archive", "memory:archive:dev", "capture:retire-legacy", "capture:retire-legacy:dev", "bench", "bench:search"]],
     decision = "prompt",
-    justification = "This tsumugi server script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    justification = "This tsumugi server script may access or mutate a database or private runtime. Confirm the target and scope first.",
     match = [
         "pnpm -C apps/server db:migrate",
         "pnpm -C apps/server bench:search",
-        "pnpm --filter @tsumugi/server dream:full",
+        "pnpm --filter @tsumugi/server memory:archive",
     ],
     not_match = [
         "pnpm -C apps/server typecheck",
@@ -48,12 +48,12 @@ prefix_rule(
 )
 
 prefix_rule(
-    pattern = ["pnpm", ["-C", "--filter"], ["apps/server", "@tsumugi/server"], "run", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "llm:smoke", "summarize:smoke", "audn:smoke", "synthesize:smoke", "time-update:smoke", "decision-contradiction:smoke", "reflection:smoke", "dream:promote", "dream:synthesize", "dream:time-update", "dream:decision", "dream:full", "dreaming:smoke", "bench", "bench:audn", "bench:promote", "bench:search", "bench:contradiction", "bench:time-update", "eval:seed"]],
+    pattern = ["pnpm", ["-C", "--filter"], ["apps/server", "@tsumugi/server"], "run", ["db:migrate", "db:studio", "db:smoke", "search:smoke", "mcp:smoke", "memory:audit", "memory:audit:dev", "memory:archive", "memory:archive:dev", "capture:retire-legacy", "capture:retire-legacy:dev", "bench", "bench:search"]],
     decision = "prompt",
-    justification = "This tsumugi server script may access or mutate a database, private runtime, or external LLM. Confirm the target and scope first.",
+    justification = "This tsumugi server script may access or mutate a database or private runtime. Confirm the target and scope first.",
     match = [
         "pnpm -C apps/server run db:migrate",
-        "pnpm --filter @tsumugi/server run eval:seed",
+        "pnpm --filter @tsumugi/server run memory:archive",
     ],
     not_match = [
         "pnpm -C apps/server run typecheck",

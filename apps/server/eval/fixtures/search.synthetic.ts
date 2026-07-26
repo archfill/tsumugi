@@ -33,7 +33,7 @@ export const seedMemories: SeedMemory[] = [
   {
     id: "mem_evalseed_01",
     narrative:
-      "Z.ai GLM Coding Plan を cold path の LLM provider として採用。subscription で API 料金が定額化される。",
+      "tsumugi serverはMCP、REST、scheduled jobの全経路で外部LLMを呼ばず、API keyやprovider clientを持たない。意味判断は作業文脈を持つclientへ委譲する。",
     kind: "decision",
   },
   {
@@ -57,7 +57,7 @@ export const seedMemories: SeedMemory[] = [
   {
     id: "mem_evalseed_05",
     narrative:
-      "node-cron 4.2.1 で dreaming jobs を定期実行する scheduler を実装。http モードでのみ起動、stdio は短命プロセスなので非対応。",
+      "node-cron schedulerはhttpモードでdeterministic maintenanceを実行する。自動jobはpromote-captures、sweep-captures、archive-outdatedに限定する。",
     kind: "decision",
   },
   {
@@ -69,7 +69,7 @@ export const seedMemories: SeedMemory[] = [
   {
     id: "mem_evalseed_07",
     narrative:
-      "LLM resilience は 3 層構成: Layer 1 は exponential backoff retry, Layer 2 は per-memory failure tracking + quarantine, Layer 3 は provider fallback。",
+      "tsumugi は Three-layer 構成: Layer 1 はTTL付きcapture、Layer 2はcanonical observation、Layer 3はlegacyまたは明示curated memory。server-side LLMによる自動promotionは行わない。",
     kind: "decision",
   },
   {
@@ -81,7 +81,7 @@ export const seedMemories: SeedMemory[] = [
   {
     id: "mem_evalseed_09",
     narrative:
-      "AUDN judge (ADD/UPDATE/DELETE/NOOP) は MID tier (Z.ai GLM-4.6) で動作、temperature=0.0 で JSON 応答を強制。",
+      "observation-first recallではLayer 2 observationを優先し、同じobservationから直接派生したLayer 3 memoryの重複hitだけを抑制する。",
     kind: "decision",
   },
   {
@@ -99,7 +99,7 @@ export const seedMemories: SeedMemory[] = [
   {
     id: "mem_evalseed_12",
     narrative:
-      "dreaming pipeline は promote-observations / synthesize / time-update / decision-contradiction / reflection の 5 ジョブで構成。",
+      "旧semantic dreaming jobはremoved_server_llmのno-opとして互換入力だけ維持し、DB更新、retry、provider callを行わない。",
     kind: "decision",
   },
   {
@@ -124,10 +124,10 @@ export const seedMemories: SeedMemory[] = [
 
 export const fixtures: FixtureCase<SearchInput, SearchExpected>[] = [
   {
-    id: "search-q01-llm-provider",
-    description: "Direct keyword 'Z.ai'",
-    input: { query: "Z.ai", limit: 5 },
-    expected: { expectedIds: ["mem_evalseed_01", "mem_evalseed_09"] },
+    id: "search-q01-zero-llm",
+    description: "Current contract 'server-side LLM'",
+    input: { query: "server-side LLM", limit: 5 },
+    expected: { expectedIds: ["mem_evalseed_01", "mem_evalseed_07"] },
   },
   {
     id: "search-q02-embedding-jp",
@@ -172,21 +172,21 @@ export const fixtures: FixtureCase<SearchInput, SearchExpected>[] = [
     expected: { expectedIds: ["mem_evalseed_06"] },
   },
   {
-    id: "search-q09-llm-resilience-en",
-    description: "'LLM resilience' multi-token",
-    input: { query: "LLM resilience", limit: 5 },
+    id: "search-q09-three-layer",
+    description: "Current architecture 'Three-layer'",
+    input: { query: "Three-layer", limit: 5 },
     expected: { expectedIds: ["mem_evalseed_07"] },
   },
   {
-    id: "search-q10-retry-concept",
-    description: "Concept 'retry'",
-    input: { query: "retry", limit: 5 },
+    id: "search-q10-canonical-observation",
+    description: "Concept 'canonical observation'",
+    input: { query: "canonical observation", limit: 5 },
     expected: { expectedIds: ["mem_evalseed_07"] },
   },
   {
-    id: "search-q11-fallback-provider",
-    description: "'fallback provider'",
-    input: { query: "fallback provider", limit: 5 },
+    id: "search-q11-automatic-promotion",
+    description: "Automatic semantic promotion is disabled",
+    input: { query: "server-side LLM 自動 promotion", limit: 5 },
     expected: { expectedIds: ["mem_evalseed_07"] },
   },
   {
@@ -202,9 +202,9 @@ export const fixtures: FixtureCase<SearchInput, SearchExpected>[] = [
     expected: { expectedIds: ["mem_evalseed_08"] },
   },
   {
-    id: "search-q14-audn",
-    description: "'AUDN'",
-    input: { query: "AUDN", limit: 5 },
+    id: "search-q14-observation-first",
+    description: "'observation-first recall'",
+    input: { query: "observation-first recall", limit: 5 },
     expected: { expectedIds: ["mem_evalseed_09"] },
   },
   {
@@ -226,9 +226,9 @@ export const fixtures: FixtureCase<SearchInput, SearchExpected>[] = [
     expected: { expectedIds: ["mem_evalseed_11"] },
   },
   {
-    id: "search-q18-dreaming",
-    description: "'dreaming pipeline'",
-    input: { query: "dreaming pipeline", limit: 5 },
+    id: "search-q18-removed-job",
+    description: "Removed semantic job compatibility",
+    input: { query: "removed_server_llm no-op", limit: 5 },
     expected: { expectedIds: ["mem_evalseed_12"] },
   },
   {
@@ -256,9 +256,9 @@ export const fixtures: FixtureCase<SearchInput, SearchExpected>[] = [
     expected: { expectedIds: ["mem_evalseed_15"] },
   },
   {
-    id: "search-q23-paraphrase",
-    description: "Paraphrase 'GLM Coding Plan の料金'",
-    input: { query: "GLM Coding Plan の料金", limit: 5 },
+    id: "search-q23-client-delegation",
+    description: "Paraphrase 'LLM API key不要'",
+    input: { query: "LLM API key 不要 client に意味判断を任せる", limit: 5 },
     expected: { expectedIds: ["mem_evalseed_01"] },
   },
   {

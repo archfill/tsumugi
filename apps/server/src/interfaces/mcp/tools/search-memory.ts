@@ -6,7 +6,7 @@ import { resolveSearchFilter } from "../../../core/search/resolve-filter.js";
 export const SEARCH_MEMORY_TOOL = {
   name: "search_memory",
   description:
-    "tsumugi の記憶を hybrid 検索 (pg_bigm + BGE-M3 embedding) で取り出す。Layer 1 (observation) と Layer 2 (memory) 両方を横断。",
+    "tsumugi の記憶を hybrid 検索 (pg_bigm + BGE-M3 embedding) で取り出す。Layer 2 (observation) と Layer 3 (memory) 両方を横断。",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -48,7 +48,7 @@ export const SEARCH_MEMORY_TOOL = {
           project_tag: {
             type: ["string", "null"],
             description:
-              "プロジェクトタグフィルタ (observations のみ有効)。string=その project に絞る。null=project_tag 自動補完のみ opt-out (他 filter は維持)。省略=session_id があれば自動補完 (ADR-013 G)。",
+              "プロジェクトタグフィルタ。string=observations と provenance の derived_from でその project に関連付いた memory に絞る。null=project_tag 自動補完のみ opt-out (他 filter は維持)。省略=session_id があれば自動補完 (ADR-013 G)。",
           },
         },
         additionalProperties: false,

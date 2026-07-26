@@ -12,8 +12,8 @@ Select all rows touched by the change. Begin with targeted checks, then expand t
 | CLI | CLI typecheck | `pnpm -C apps/cli pack:dry` for packaging/release changes; inspect tarball contents |
 | Claude/Codex integration scripts | inspect hook/plugin manifests and changed scripts | Run the narrowest safe local hook probe; verify installed runtime separately when claiming installation behavior |
 | Search behavior | targeted search tests; server test/typecheck | `bench:search` when fixture/runtime dependencies are available |
-| Observation promotion | targeted promotion/resilience tests; server test/typecheck | `bench:promote`, disposable DB, and provider smoke only when authorized |
-| Dreaming / synthesis / time update | targeted dreaming/resilience tests; server test/typecheck | matching bench or smoke; distinguish provider availability from code correctness |
+| Stop capture promotion | targeted capture promotion / idempotency tests; server test/typecheck | disposable PostgreSQL integration when repository mocks cannot prove atomicity |
+| Deterministic maintenance / compatibility jobs | targeted scheduler, archive, or removed-job no-op tests; server test/typecheck | disposable DB for mutation paths; confirm removed semantic jobs have no side effects |
 | Cross-package or release-ready change | `pnpm typecheck`; `pnpm -r build`; `pnpm -r test`; `git diff --check` | DB integration, browser QA, packaging, or live smoke according to rows above |
 
 ## Targeted server commands
@@ -47,13 +47,10 @@ Available focused commands include:
 
 ```bash
 pnpm -C apps/server bench:search
-pnpm -C apps/server bench:promote
-pnpm -C apps/server bench:audn
-pnpm -C apps/server bench:contradiction
-pnpm -C apps/server bench:time-update
+pnpm -C apps/server eval:search-provenance-policy:dev
+pnpm -C apps/server memory:audit:dev
 ```
 
-These scripts load `../../.env`. Do not read or expose that file. Run a bench only when the environment is already configured and the task authorizes external calls or DB access it may perform.
+`bench:search` and `memory:audit:dev` may load private DB configuration. Do not read or expose `.env`, and run them only when the task authorizes the target and scope. `eval:search-provenance-policy:dev` is the synthetic in-process policy check.
 
 Report fixture classes and case counts with the result. Treat missing private fixtures as an explicit coverage gap, not a pass.
-

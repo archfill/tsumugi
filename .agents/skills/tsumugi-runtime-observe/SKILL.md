@@ -1,6 +1,6 @@
 ---
 name: tsumugi-runtime-observe
-description: Collect and interpret read-only runtime evidence for the tsumugi capture, observation, memory, promotion, dreaming, and provider-resilience paths. Use when monitoring production or staging health, comparing runtime trends, investigating backlog or quarantine growth, evaluating continuity and promotion quality, or preparing evidence for an ADR or ROADMAP status decision. Do not use for code-change verification, database mutation, deployment, or incident remediation.
+description: Collect and interpret read-only runtime evidence for tsumugi deterministic capture, Stop promotion, observation-first recall, legacy memory compatibility, continuity, archive, and scheduler paths. Use when monitoring production or staging health, comparing runtime trends, investigating deterministic backlog or attention growth, evaluating recall and continuity quality, or preparing evidence for an ADR or ROADMAP decision. Do not use for code-change verification, database mutation, deployment, or incident remediation.
 ---
 
 # Observe the tsumugi runtime
@@ -24,7 +24,7 @@ Prefer evidence in this order:
 
 1. Read-only Admin REST responses and pipeline traces.
 2. Prometheus metrics over a defined interval.
-3. Scheduler state and persisted dreaming run history.
+3. Scheduler state and persisted maintenance run history.
 4. Sanitized logs for exact failure mechanisms.
 5. Read-only PostgreSQL queries only when explicitly authorized and higher-level evidence is insufficient.
 
@@ -43,7 +43,7 @@ Do not read `.env*`, credentials, tokens, private endpoint configuration, or raw
 
 - Do not equate `/health` success with pipeline quality.
 - Do not infer promotion quality from throughput alone; inspect a bounded sample with provenance.
-- Distinguish provider-wide cooldown from item-specific retry or quarantine.
+- Distinguish deterministic validation / persistence failures from historical LLM failure fields.
 - Distinguish backlog size from backlog age and drain rate.
 - Treat a single snapshot as current state, not a trend.
 - Compare against a named baseline or previous window; do not invent thresholds when no SLO exists.
@@ -52,7 +52,7 @@ Do not read `.env*`, credentials, tokens, private endpoint configuration, or raw
 
 Remain read-only. Do not:
 
-- trigger dreaming, promotion, retry, sweep, or backfill jobs;
+- trigger promotion, retry, sweep, archive, or backfill jobs;
 - archive, mark outdated, quarantine, unquarantine, or rewrite data;
 - run migrations, deploy, restart services, or change scheduler state;
 - call an external LLM or seed an eval dataset;
@@ -71,7 +71,7 @@ Lead with one status:
 Then report:
 
 1. environment, window, scope, and filters;
-2. evidence by capture, promotion, memory, provider, and scheduler as applicable;
+2. evidence by capture, promotion, observation / memory recall, continuity, archive, and scheduler as applicable;
 3. trend or baseline comparison;
 4. bounded quality samples and provenance when used;
 5. confirmed concerns, hypotheses, and coverage gaps in separate sections;

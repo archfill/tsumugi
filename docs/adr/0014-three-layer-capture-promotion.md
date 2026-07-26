@@ -56,7 +56,12 @@ Stop 以外の legacy LLM window は自動昇格しない。専用 CLI の dry-r
 - observation と memory を従来どおり hybrid search する
 - RRF 後、候補 observation から直接 `derived_from` された候補 memory だけを抑制する
 - standalone / unlinked / curated memory、候補外 observation 由来 memory は維持する
-- provenance、source、project、timestamp、outdated 状態を結果へ付与する
+- 結果は `layer` / `id` / `excerpt` / `score` / `tags` と、関連entityの
+  `layer` / `id` / `relation` / `created_at` を含む `provenance` を返す
+- `source` / `session_id` / `type` はobservation-only filter、`project_tag` は
+  observationと `derived_from` provenanceで関連付いたmemoryに適用する
+- `outdated` はmark / archive経路で管理する（filterとoutdated stateはいずれも
+  `SearchHit` の直接fieldではない）
 - similarity は順位付け・review candidate に使い、semantic content の自動更新根拠にしない
 
 ### deterministic maintenance

@@ -1,7 +1,13 @@
 # ADR-001: 二層アーキテクチャ（Layer 1 / Layer 2）採用
 
 - 日付: 2026-06-14
-- ステータス: Accepted
+- 最終更新: 2026-07-27
+- ステータス: Superseded by ADR-014 (2026-07-26)
+
+> Historical record: observation / memory分離の原則はADR-014へ継承されたが、
+> layer番号とobservationからmemoryを自動合成する決定は置換された。
+> 現行定義はLayer 1 capture、Layer 2 observation、Layer 3 legacy / explicit curated memoryで、
+> Layer 2をcanonical sourceとし、server-side LLM promotionは行わない。
 
 ## コンテキスト
 
