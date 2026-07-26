@@ -1,5 +1,6 @@
 import type { SearchHit } from "@tsumugi/shared";
 import { linkRepo } from "../../data/repos/link.js";
+import { removeDerivedMemoryCandidates } from "./provenance-policy.js";
 
 export type SearchLayer = "observation" | "memory";
 
@@ -42,6 +43,20 @@ export async function filterMemoryHitsByProjectTag<
     (hit) => hit.layer === "observation" || allowedMemoryIds.has(hit.id),
   );
 }
+
+/** Prefer candidate observations over their directly derived candidate memory. */
+export async function preferObservationCandidates<
+  T extends SearchCandidate,
+>(hits: T[]): Promise<T[]> {
+  const observationIds = [...new Set(hits.filter((hit) => hit.layer === "observation").map((hit) => hit.id))];
+  const memoryIds = [...new Set(hits.filter((hit) => hit.layer === "memory").map((hit) => hit.id))];
+  if (observationIds.length === 0 || memoryIds.length === 0) return hits;
+  const derivedMemoryIds = new Set(
+    await linkRepo.listMemoryIdsDirectlyDerivedFromCandidates({ observationIds, memoryIds }),
+  );
+  return removeDerivedMemoryCandidates(hits, derivedMemoryIds);
+}
+
 
 export async function attachProvenance(
   hits: SearchResultCandidate[],

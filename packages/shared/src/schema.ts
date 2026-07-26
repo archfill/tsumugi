@@ -87,6 +87,50 @@ export const MarkMemoryOutdatedInput = z.object({
 });
 export type MarkMemoryOutdatedInput = z.infer<typeof MarkMemoryOutdatedInput>;
 
+export const DreamingJobInput = z.enum([
+  "promote-captures",
+  "sweep-captures",
+  "archive-outdated",
+  "promote-observations",
+  "synthesize",
+  "time-update",
+  "decision-contradiction",
+  "reflection",
+  "full",
+]);
+export type DreamingJobInput = z.infer<typeof DreamingJobInput>;
+
+export const TriggerDreamingInput = z
+  .object({
+    job: DreamingJobInput,
+    sessionId: z.string().min(1).optional(),
+    maxCaptures: z.number().int().positive().max(500).optional(),
+    maxObservations: z.number().int().positive().max(500).optional(),
+    maxMemories: z.number().int().positive().max(500).optional(),
+    maxUpdates: z.number().int().nonnegative().max(500).optional(),
+    timeUpdateMaxRunMs: z
+      .number()
+      .int()
+      .positive()
+      .max(86_400_000)
+      .optional(),
+    timeUpdateMaxFailures: z.number().int().nonnegative().max(100).optional(),
+    timeUpdateMaxConsecutiveFailures: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(100)
+      .optional(),
+    timeUpdateStaleRunMs: z
+      .number()
+      .int()
+      .positive()
+      .max(7 * 24 * 60 * 60 * 1000)
+      .optional(),
+  })
+  .strict();
+export type TriggerDreamingInput = z.infer<typeof TriggerDreamingInput>;
+
 // ---------------------------------------------------------------------------
 // Admin operations console (read-only)
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
  *
  * Layer 1: captures     — deterministic raw hook capture, TTL-bound
  * Layer 2: observations — curated accumulation layer
- * Layer 3: memories     — synthesised, regenerable summaries
+ * Layer 3: memories     — legacy or explicitly curated records
  * decisions            — explicit decisions with lifecycle tracking
  * links                — provenance edges between any layer entities
  */
@@ -170,7 +170,11 @@ export const capturePromotionWindows = pgTable(
     source: text("source").notNull(),
     session_id: text("session_id").notNull(),
     project_tag: text("project_tag"),
-    /** pending | processing | committing | completed | skipped | deferred | quarantined | expired */
+    /** window = legacy LLM batch | stop_checkpoint = deterministic Stop promotion */
+    promotion_kind: text("promotion_kind").notNull().default("window"),
+    /** Idempotency key for deterministic promotion.  NULL keeps legacy windows untouched. */
+    promotion_key: text("promotion_key"),
+    /** pending | processing | committing | completed | skipped | deferred | quarantined | expired | retired */
     status: text("status").notNull().default("pending"),
     cutoff_at: timestamp("cutoff_at", { withTimezone: true }).notNull(),
     capture_count: integer("capture_count").notNull(),
@@ -202,6 +206,9 @@ export const capturePromotionWindows = pgTable(
       table.next_attempt_at,
       table.created_at,
     ),
+    uniqueIndex("uq_capture_windows_promotion_key")
+      .on(table.promotion_key)
+      .where(sql`${table.promotion_key} IS NOT NULL`),
   ],
 );
 
@@ -316,6 +323,55 @@ export const memories = pgTable("memories", {
 
 export type Memory = typeof memories.$inferSelect;
 export type NewMemory = typeof memories.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Reversible memory archive audit trail
+// ---------------------------------------------------------------------------
+export const memoryArchiveBatches = pgTable("memory_archive_batches", {
+  id: text("id").primaryKey(),
+  /** planned | applied | restored | failed */
+  status: text("status").notNull().default("planned"),
+  /** exact_duplicate | reviewed_metadata_noise */
+  reason: text("reason").notNull(),
+  /** Thresholds and review metadata only; never raw narrative. */
+  criteria: jsonb("criteria").$type<Record<string, unknown>>().notNull(),
+  candidate_count: integer("candidate_count").notNull(),
+  archived_count: integer("archived_count").notNull().default(0),
+  created_at: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  applied_at: timestamp("applied_at", { withTimezone: true }),
+  restored_at: timestamp("restored_at", { withTimezone: true }),
+});
+
+export type MemoryArchiveBatch = typeof memoryArchiveBatches.$inferSelect;
+export type NewMemoryArchiveBatch = typeof memoryArchiveBatches.$inferInsert;
+
+export const memoryArchiveItems = pgTable(
+  "memory_archive_items",
+  {
+    batch_id: text("batch_id")
+      .notNull()
+      .references(() => memoryArchiveBatches.id),
+    memory_id: text("memory_id")
+      .notNull()
+      .references(() => memories.id),
+    /** exact_duplicate or a reviewed reason; no raw narrative. */
+    reason_code: text("reason_code").notNull(),
+    canonical_memory_id: text("canonical_memory_id").references(
+      () => memories.id,
+    ),
+    was_archived: boolean("was_archived").notNull(),
+    archived_at_before: timestamp("archived_at_before", { withTimezone: true }),
+    created_at: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.batch_id, table.memory_id] })],
+);
+
+export type MemoryArchiveItem = typeof memoryArchiveItems.$inferSelect;
+export type NewMemoryArchiveItem = typeof memoryArchiveItems.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // decisions

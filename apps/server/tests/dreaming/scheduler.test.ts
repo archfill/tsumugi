@@ -31,11 +31,8 @@ const { startScheduler } = await import(
 const config: SchedulerConfig = {
   enabled: true,
   promoteCaptures: "0,30 * * * *",
-  promoteObservations: "",
   sweepCaptures: "",
-  synthesize: "",
-  timeUpdate: "",
-  decisionContradiction: "",
+  archiveOutdated: "",
 };
 
 function completedRun() {
@@ -105,5 +102,30 @@ describe("dreaming scheduler shutdown", () => {
 
     expect(runDreamingMock).not.toHaveBeenCalled();
     expect(cronState.tasks[0]!.stop).toHaveBeenCalledOnce();
+  });
+
+  it("archive-outdatedは空のscheduleでは登録しない", () => {
+    const scheduler = startScheduler(config)!;
+
+    expect(scheduler.jobs).toEqual([
+      { job: "promote-captures", cronExpr: "0,30 * * * *" },
+    ]);
+  });
+
+  it("有効な deterministic maintenance job だけを登録する", () => {
+    const maintenanceConfig: SchedulerConfig = {
+      ...config,
+      promoteCaptures: "0,30 * * * *",
+      sweepCaptures: "30 2 * * *",
+      archiveOutdated: "0 3 * * *",
+    };
+
+    const scheduler = startScheduler(maintenanceConfig)!;
+
+    expect(scheduler.jobs).toEqual([
+      { job: "promote-captures", cronExpr: "0,30 * * * *" },
+      { job: "sweep-captures", cronExpr: "30 2 * * *" },
+      { job: "archive-outdated", cronExpr: "0 3 * * *" },
+    ]);
   });
 });

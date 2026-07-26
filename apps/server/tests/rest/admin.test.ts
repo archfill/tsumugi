@@ -39,6 +39,7 @@ const dreamingRunRepoMock = vi.hoisted(() => ({
 
 const getActiveSchedulerMock = vi.hoisted(() => vi.fn());
 const retryPromotionIssueMock = vi.hoisted(() => vi.fn());
+const runDreamingMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../src/data/repos/admin.js", () => ({
   adminRepo: adminRepoMock,
@@ -62,7 +63,7 @@ vi.mock("../../src/interfaces/mcp/transport-http.js", () => ({
   getActiveScheduler: getActiveSchedulerMock,
 }));
 vi.mock("../../src/core/dreaming/runner.js", () => ({
-  runDreaming: vi.fn(),
+  runDreaming: runDreamingMock,
 }));
 vi.mock("../../src/core/capture/save.js", () => ({ saveCapture: vi.fn() }));
 vi.mock("../../src/core/capture/continuity.js", () => ({
@@ -111,6 +112,22 @@ describe("Admin REST read contract", () => {
       kind: "fact",
       id: "fact_1",
     });
+  });
+
+  it("dreaming trigger は共有strict schemaで不正入力を400にする", async () => {
+    for (const body of [
+      { job: "promote-captures", unknown: true },
+      { job: "promote-captures", maxCaptures: -1 },
+      { job: "promote-captures", maxCaptures: 501 },
+    ]) {
+      const response = await restApp.request("/dreaming/trigger", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(runDreamingMock).not.toHaveBeenCalled();
   });
 
   it("overviewへproject/source/期間filterを型付きで渡す", async () => {

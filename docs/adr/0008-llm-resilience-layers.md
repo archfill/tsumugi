@@ -1,7 +1,11 @@
 # ADR-008: LLM resilience を 3 層で構築する
 
 - 日付: 2026-06-14
-- ステータス: Accepted (2026-07-14 改訂)
+- ステータス: Superseded by ADR-003 (2026-07-26)
+
+> Historical record: provider retry / fallback / cooldown runtime was removed
+> together with all server-side LLM calls. Historical DB columns remain only for
+> compatibility and audit; they are not active worker state.
 
 ## コンテキスト
 

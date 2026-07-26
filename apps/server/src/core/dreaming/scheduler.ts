@@ -8,21 +8,15 @@
  *   - 実行履歴は既存の dreamingRunRepo / runner に乗る
  *
  * Default schedule:
- *   - promote-captures           : minute 0,30     (0,30 * * * *)
- *   - promote-observations       : minute 5,35     (5,35 * * * *)
+ *   - promote-captures           : every 5 minutes (every-five cron)
  *   - sweep-captures             : daily 02:30    (30 2 * * *)
- *   - synthesize                 : every 6 hours  (0 *\/6 * * *)
- *   - time-update                : daily 03:00    (0 3 * * *)
- *   - decision-contradiction     : weekly Sun 04  (0 4 * * 0)
+ *   - archive-outdated           : disabled by default (explicit opt-in)
  *
  * 環境変数:
  *   DREAMING_SCHEDULER_ENABLED               = "false" で全停止
- *   DREAMING_SCHEDULE_PROMOTE_CAPTURES       = "0,30 * * * *"
- *   DREAMING_SCHEDULE_PROMOTE_OBSERVATIONS   = "5,35 * * * *"
+ *   DREAMING_SCHEDULE_PROMOTE_CAPTURES       = every-five cron
  *   DREAMING_SCHEDULE_SWEEP_CAPTURES         = "30 2 * * *"
- *   DREAMING_SCHEDULE_SYNTHESIZE             = "0 *\/6 * * *"
- *   DREAMING_SCHEDULE_TIME_UPDATE            = "0 3 * * *"
- *   DREAMING_SCHEDULE_DECISION_CONTRADICTION = "0 4 * * 0"
+ *   DREAMING_SCHEDULE_ARCHIVE_OUTDATED        = "" (explicit opt-in)
  */
 
 import * as cron from "node-cron";
@@ -143,21 +137,8 @@ export function startScheduler(
   };
 
   scheduleOne("promote-captures", config.promoteCaptures, tasks, trigger);
-  scheduleOne(
-    "promote-observations",
-    config.promoteObservations,
-    tasks,
-    trigger,
-  );
   scheduleOne("sweep-captures", config.sweepCaptures, tasks, trigger);
-  scheduleOne("synthesize", config.synthesize, tasks, trigger);
-  scheduleOne("time-update", config.timeUpdate, tasks, trigger);
-  scheduleOne(
-    "decision-contradiction",
-    config.decisionContradiction,
-    tasks,
-    trigger,
-  );
+  scheduleOne("archive-outdated", config.archiveOutdated, tasks, trigger);
 
   if (tasks.length === 0) {
     logger.warn("scheduler: no jobs scheduled");

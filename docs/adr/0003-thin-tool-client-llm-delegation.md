@@ -1,57 +1,65 @@
-# ADR-003: hot path LLM ゼロ — クライアント LLM への観測整形委譲
+# ADR-003: サーバー側 LLM ゼロ — クライアントへの意味判断委譲
 
 - 日付: 2026-06-14
+- 最終更新: 2026-07-26
 - ステータス: Accepted
+- 置換: 旧決定「hot path のみ LLM ゼロ」をサーバー全体へ拡張
 
 ## コンテキスト
 
-MCP tool (`save_observation`) の呼び出し元は Claude Code / Codex / yui などの AI エージェントである。
-エージェントはすでに LLM を持ち、観測内容を自然言語で生成する能力がある。
+MCP / REST の呼び出し元である Claude Code、Codex、yui は、すでに作業文脈を持つ
+LLM を備えている。一方、tsumugi サーバーで capture / observation / memory を再要約・
+再判定すると、外部 provider の rate limit、長い retry、部分成功後の再実行が発生した。
+結果として保存済みデータの重複副作用と promotion 遅延が生じ、サーバー運用に API key、
+provider fallback、cooldown、quarantine が必要になった。
 
-サーバー側でも LLM を呼び出し「観測を要約・構造化してから保存する」設計が考えられるが、
-以下の問題がある:
-
-- **レイテンシ**: LLM 推論は数秒かかる。MCP tool call の応答が遅れる
-- **コスト**: 保存のたびに LLM を呼ぶと API コストが線形に増加する
-- **冗長性**: 呼び出し元エージェントがすでに整形済みテキストを持っているのに二重処理になる
-- **結合**: サーバーが特定 LLM プロバイダに依存し、可搬性が下がる
+Stop checkpoint の `continuity_content` はホスト側 LLM がすでに整理した最終応答である。
+サーバーが同じ内容を再度 LLM で要約する必要はない。
 
 ## 決定
 
-**hot path（`save_observation` / `search_memory`）では LLM を呼ばない。**
+**tsumugi サーバーは、同期経路・scheduled job・手動 job のいずれからも外部 LLM を呼ばない。**
 
-観測の整形・構造化はクライアント LLM（呼び出し元エージェント）の責務とする。
-サーバーは受け取ったテキストをそのまま保存し、embedding のみをサーバー側で生成する。
+- `save_observation` はクライアントが渡した `content` / `type` / `facts` を検証し、そのまま保存する
+- Stop capture は `continuity_content` を決定論的に 1 observation へ昇格する
+- BGE-M3 embedding と pg_bigm / pgvector hybrid search はサーバー内で継続する
+- observation を主要な検索対象とし、同じ source observation から派生した memory hit は重複表示しない
+- memory は必須の自動生成層ではなく、既存互換または明示的に curated された任意層とする
+- semantic merge、contradiction、supersede は自動適用せず、クライアントが文脈内で判断して明示操作する
+- retention、outdated archive、exact duplicate 候補抽出など、意味内容を書き換えない保守だけを自動化する
+- LLM API key、provider client、retry / fallback / cooldown / quarantine runtime はサーバー構成から除去する
 
-具体的には:
+旧 LLM job 名は既存クライアントとの互換性のため入力 schema に残せるが、実行時は DB や
+provider に触れず `removed_server_llm` の no-op 結果を返す。
 
-- `save_observation` の `content` は呼び出し元が整形済みのテキストを渡す
-- `type` / `source` / `facts` などの構造化フィールドも呼び出し元が決定する
-- サーバーは Zod で入力を検証し、BGE-M3 でベクトル化して保存するだけ
+## 理由
 
-**LLM を呼ぶのは dreaming フェーズ（Layer 2 synthesis）のみ**。
-dreaming は非同期・低頻度で実行されるため、レイテンシ制約がない。
+- capture: deterministic hook と Stop checkpoint により取りこぼしを防げる
+- recall: observation 自体を BGE-M3 + pg_bigm で検索できる
+- forgetting: 時刻・状態・exact identity に基づく決定論的保守へ限定できる
+- transparency: 保存元、時刻、provenance link を追跡できる
+- continuity: promotion 待ち bridge と決定論的 Stop observation の両方を維持できる
 
-## 代替案と却下理由
+## 代替案
 
-**サーバー側で LLM を呼び、観測を自動分類・要約する**
+### 別 provider またはローカル LLM へ置き換える
 
-- 却下: hot path のレイテンシが許容できない。
-  BGE-M3 embedding だけでも数百ミリ秒かかる環境で、追加の LLM 呼び出しは非現実的。
+不採用。provider を変えても二重意味判断、部分成功、再試行増幅、運用秘密の問題は残る。
 
-**エージェント側は raw テキストのみ渡し、サーバーで全構造化**
+### embedding 類似度だけで memory を自動統合する
 
-- 却下: `type` や `facts` の判断には文脈が必要で、文脈を最もよく知るのは呼び出し元エージェント。
-  サーバーに文脈がなく、精度が下がる。
+不採用。類似度は候補提示には使えるが、意味の同一性や contradiction の確定根拠にはならない。
 
-**Function calling で LLM に JSON 生成させてサーバーに渡す（現在の設計）**
+### memory 層を即時削除する
 
-- 採用: エージェントが `save_observation` を tool call する時点で、引数を JSON として整形する。
-  Zod schema が OpenAPI compatible な JSON Schema に変換でき、MCP tool の `inputSchema` として使える。
+不採用。既存の curated / legacy memory と provenance を保持し、observation-first 検索で段階移行する。
 
 ## 帰結
 
-- `save_observation` の応答時間は embedding 時間（BGE-M3 CPU: ~200ms〜数秒）が支配的
-- サーバーに LLM クライアントの設定（API キー等）は不要（dreaming 実装時に追加する）
-- クライアントが異なる LLM を使っていても動作する（provider 非依存）
-- dreaming フェーズ（Phase 2）では LLM を導入するが、MCP tool のレスポンスには影響しない
+- サーバー起動・MCP / REST・scheduled maintenance に LLM API key は不要
+- provider 障害で capture promotion が停止することはない
+- サーバーが自動生成する fact 単位 memory は増えない
+- 高度な意味整理は、元の作業文脈を持つクライアントの明示操作に委譲される
+- 旧 LLM 生成データは hard delete せず、別の可逆監査手順で扱う
+
+詳細な capture / observation / memory の状態遷移は ADR-014、検索契約は ADR-013 を参照する。

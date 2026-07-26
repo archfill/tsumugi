@@ -3,13 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const linkRepoMock = vi.hoisted(() => ({
   listMemoryIdsDerivedFromProject: vi.fn(),
   listSearchProvenance: vi.fn(),
+  listMemoryIdsDirectlyDerivedFromCandidates: vi.fn(),
 }));
 
 vi.mock("../../src/data/repos/link.js", () => ({
   linkRepo: linkRepoMock,
 }));
 
-const { attachProvenance, filterMemoryHitsByProjectTag } = await import(
+const { attachProvenance, filterMemoryHitsByProjectTag, preferObservationCandidates } = await import(
   "../../src/core/search/provenance.js"
 );
 
@@ -17,6 +18,41 @@ describe("search provenance policy", () => {
   beforeEach(() => {
     linkRepoMock.listMemoryIdsDerivedFromProject.mockReset();
     linkRepoMock.listSearchProvenance.mockReset();
+    linkRepoMock.listMemoryIdsDirectlyDerivedFromCandidates.mockReset();
+  });
+
+  describe("preferObservationCandidates", () => {
+    it("片layerならrepoを呼ばず順序とscoreを保持する", async () => {
+      const hits = [{ id: "mem_1", layer: "memory" as const, score: 0.3 }];
+      expect(await preferObservationCandidates(hits)).toBe(hits);
+      expect(linkRepoMock.listMemoryIdsDirectlyDerivedFromCandidates).not.toHaveBeenCalled();
+    });
+
+    it("候補observationからdirect derivedの候補memoryだけを除外する", async () => {
+      linkRepoMock.listMemoryIdsDirectlyDerivedFromCandidates.mockResolvedValueOnce(["mem_drop"]);
+      const hits = [
+        { id: "obs_1", layer: "observation" as const, score: 0.8 },
+        { id: "mem_drop", layer: "memory" as const, score: 0.7 },
+        { id: "mem_keep", layer: "memory" as const, score: 0.6 },
+      ];
+      expect(await preferObservationCandidates(hits)).toEqual([hits[0], hits[2]]);
+      expect(linkRepoMock.listMemoryIdsDirectlyDerivedFromCandidates).toHaveBeenCalledWith({
+        observationIds: ["obs_1"], memoryIds: ["mem_drop", "mem_keep"],
+      });
+    });
+
+    it("pairなし・候補外observationはmemoryを保持し、duplicate IDを一度だけ照会する", async () => {
+      linkRepoMock.listMemoryIdsDirectlyDerivedFromCandidates.mockResolvedValueOnce([]);
+      const hits = [
+        { id: "mem_1", layer: "memory" as const, score: 0.7 },
+        { id: "mem_1", layer: "memory" as const, score: 0.6 },
+        { id: "obs_1", layer: "observation" as const, score: 0.5 },
+      ];
+      expect(await preferObservationCandidates(hits)).toEqual(hits);
+      expect(linkRepoMock.listMemoryIdsDirectlyDerivedFromCandidates).toHaveBeenCalledWith({
+        observationIds: ["obs_1"], memoryIds: ["mem_1"],
+      });
+    });
   });
 
   describe("filterMemoryHitsByProjectTag", () => {

@@ -142,4 +142,24 @@ export const linkRepo = {
     `);
     return result.rows.map((row) => row.id);
   },
+  async listMemoryIdsDirectlyDerivedFromCandidates(params: {
+    observationIds: string[];
+    memoryIds: string[];
+  }): Promise<string[]> {
+    if (params.observationIds.length === 0 || params.memoryIds.length === 0) {
+      return [];
+    }
+    const observationIdArray = textArray(params.observationIds);
+    const memoryIdArray = textArray(params.memoryIds);
+    const result = await db.execute<{ id: string }>(sql`
+      SELECT DISTINCT l.to_id AS id
+      FROM links l
+      WHERE l.from_id = ANY(${observationIdArray})
+        AND l.to_id = ANY(${memoryIdArray})
+        AND l.from_layer = 'observation'
+        AND l.to_layer = 'memory'
+        AND l.relation = 'derived_from'
+    `);
+    return result.rows.map((row) => row.id);
+  },
 };

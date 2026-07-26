@@ -167,13 +167,7 @@ async function observationSummary(
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE o.created_at >= now() - interval '24 hours')::int AS created_24h,
-        MIN(o.created_at) FILTER (
-          WHERE o.promotion_state = 'processing'
-             OR (
-               o.promotion_state = 'ready'
-               AND o.promotion_next_attempt_at <= now()
-             )
-        ) AS oldest_actionable_at
+        NULL::timestamptz AS oldest_actionable_at
       FROM observations o
       ${where(filters)}
     `),
@@ -218,7 +212,7 @@ async function memorySummary(scope: AdminScope): Promise<AdminLayerSummary> {
         COUNT(DISTINCT m.id)::int AS total,
         COUNT(DISTINCT m.id) FILTER (WHERE m.updated_at >= now() - interval '24 hours')::int AS created_24h,
         MIN(m.updated_at) FILTER (
-          WHERE m.outdated_at IS NOT NULL OR m.llm_quarantined_at IS NOT NULL
+          WHERE m.outdated_at IS NOT NULL
         ) AS oldest_actionable_at
       ${from}
       ${where(filters)}
@@ -249,6 +243,7 @@ async function queueSummary(
 ): Promise<AdminQueueSummary> {
   const isWindow = stage === "window";
   const filters = isWindow ? windowScope(scope) : factScope(scope);
+  if (isWindow) filters.push(sql`w.promotion_kind = 'stop_checkpoint'`);
   const table = isWindow
     ? sql`capture_promotion_windows w`
     : sql`observation_promotion_facts f JOIN observations o ON o.id = f.observation_id`;
@@ -263,13 +258,7 @@ async function queueSummary(
           OR (w.status = 'processing' AND w.lease_expires_at < now())
         )
       )`
-    : sql`(
-        f.next_attempt_at <= now()
-        AND (
-          f.status IN ('pending', 'deferred')
-          OR (f.status = 'processing' AND f.lease_expires_at < now())
-        )
-      )`;
+    : sql`false`;
   const [summaryResult, statesResult] = await Promise.all([
     db.execute<{ total: number | string; oldest_actionable_at: Date | string | null }>(sql`
       SELECT
@@ -329,72 +318,24 @@ function currentOperationIssues(): SQL {
       CONCAT(w.capture_count, ' captures / ', w.completed_turns, ' completed turns') AS summary,
       w.last_error
     FROM capture_promotion_windows w
-    WHERE w.status = 'quarantined'
-       OR (w.status = 'deferred' AND w.next_attempt_at <= now())
-       OR (w.status IN ('processing', 'committing') AND w.lease_expires_at < now())
-
-    UNION ALL
-
-    SELECT
-      f.id,
-      'fact'::text AS kind,
-      CASE
-        WHEN f.status IN ('processing', 'committing') AND f.lease_expires_at < now() THEN 'stale'
-        ELSE f.status
-      END AS state,
-      o.project_tag,
-      o.source,
-      f.updated_at AS occurred_at,
-      f.attempt_count,
-      f.failure_count,
-      LEFT(f.fact, 280) AS summary,
-      f.last_error
-    FROM observation_promotion_facts f
-    JOIN observations o ON o.id = f.observation_id
-    WHERE f.status = 'quarantined'
-       OR (f.status = 'deferred' AND f.next_attempt_at <= now())
-       OR (f.status IN ('processing', 'committing') AND f.lease_expires_at < now())
-
-    UNION ALL
-
-    SELECT
-      o.id,
-      'observation'::text AS kind,
-      CASE
-        WHEN o.promotion_state = 'ready' AND o.promotion_failure_count > 0
-          THEN 'deferred'
-        ELSE o.promotion_state
-      END AS state,
-      o.project_tag,
-      o.source,
-      COALESCE(o.promotion_last_failure_at, o.created_at) AS occurred_at,
-      0::int AS attempt_count,
-      o.promotion_failure_count AS failure_count,
-      LEFT(o.content, 280) AS summary,
-      o.promotion_last_error AS last_error
-    FROM observations o
-    WHERE o.promotion_state IN ('quarantined', 'legacy_partial')
-       OR (
-         o.promotion_state = 'ready'
-         AND o.promotion_failure_count > 0
-         AND o.promoted_at IS NULL
-         AND o.promotion_next_attempt_at <= now()
-       )
+    WHERE w.promotion_kind = 'stop_checkpoint'
+      AND (
+        w.status = 'quarantined'
+        OR (w.status = 'deferred' AND w.next_attempt_at <= now())
+        OR (w.status IN ('processing', 'committing') AND w.lease_expires_at < now())
+      )
 
     UNION ALL
 
     SELECT
       m.id,
       'memory'::text AS kind,
-      CASE
-        WHEN m.outdated_at IS NOT NULL THEN 'outdated'
-        ELSE 'quarantined'
-      END AS state,
+      'outdated'::text AS state,
       provenance.project_tag,
       provenance.source,
-      COALESCE(m.outdated_at, m.llm_quarantined_at, m.updated_at) AS occurred_at,
-      m.llm_failure_count AS attempt_count,
-      m.llm_failure_count AS failure_count,
+      m.outdated_at AS occurred_at,
+      0::int AS attempt_count,
+      0::int AS failure_count,
       LEFT(m.narrative, 280) AS summary,
       m.outdated_reason AS last_error
     FROM memories m
@@ -409,7 +350,7 @@ function currentOperationIssues(): SQL {
       LIMIT 1
     ) provenance ON true
     WHERE m.archived_at IS NULL
-      AND (m.outdated_at IS NOT NULL OR m.llm_quarantined_at IS NOT NULL)
+      AND m.outdated_at IS NOT NULL
 
     UNION ALL
 
@@ -426,6 +367,7 @@ function currentOperationIssues(): SQL {
       r.error_message AS last_error
     FROM dreaming_runs r
     WHERE r.status = 'running'
+      AND r.job_kind IN ('promote-captures', 'sweep-captures', 'archive-outdated')
       AND r.started_at < now() - interval '2 hours'
   `;
 }
@@ -488,13 +430,7 @@ async function getFilterOptions(): Promise<AdminFilterOptions> {
         "legacy_partial",
       ],
       memories: ["active", "outdated", "quarantined", "archived"],
-      operations: [
-        "deferred",
-        "quarantined",
-        "stale",
-        "outdated",
-        "legacy_partial",
-      ],
+      operations: ["deferred", "quarantined", "stale", "outdated"],
     },
   };
 }

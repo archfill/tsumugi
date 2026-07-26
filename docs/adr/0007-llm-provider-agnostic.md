@@ -1,7 +1,11 @@
 # ADR-007: LLM は provider 非依存にする (OpenAI 互換 + Anthropic)
 
 - 日付: 2026-06-14
-- ステータス: Accepted (ADR-003 を補強)
+- ステータス: Superseded by ADR-003 (2026-07-26)
+
+> Historical record: server-side LLM provider runtime was removed when ADR-003
+> expanded the zero-LLM boundary to the entire server. This document describes
+> the retired implementation and is not an active configuration contract.
 
 ## コンテキスト
 

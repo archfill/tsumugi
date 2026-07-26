@@ -1,29 +1,31 @@
 # 紬（Tsumugi）
 
-archfill 製の MCP ベース記憶レイヤー。観測・記憶・想起・dreaming を担う、自律エージェント向けメモリインフラ。
+archfill 製の MCP ベース記憶レイヤー。capture・観測・想起・決定論的保守を担う、自律エージェント向けメモリインフラ。
 
 > **Status: pre-1.0 / single-user / unverified in production.**
 > 本リポジトリは作者の個人プロジェクトとして開発中。長期運用・大規模負荷・複数ユーザ環境での検証は未実施。実運用での導入を推奨できる段階ではない。
 
 ## コンセプト
 
-- 記憶を「糸」として紡ぐメタファ — 観測（observation）を取り込み、整理・統合して記憶層に紡ぎ込む
-- ドリーミング（time-aware update / cross-session synthesize / decision supersede chain / reflection）で記憶を継続的に再編成
+- 記憶を「糸」として紡ぐメタファ — completed turn を capture し、canonical observation として検索可能にする
+- semantic content の整理は元の作業文脈を持つクライアントへ委譲し、サーバーは自動で意味を書き換えない
 - MCP server として **Claude Code / Codex** などの AI クライアントから共通利用
 
 ## 設計方針
 
-### 二層構造（synthesis + accumulation の両取り）
+### Three-layer 構造
 
-- **Layer 1: Observation**（accumulation） — 生観測、immutable、消さない
-- **Layer 2: Memory**（synthesis） — dreaming で生成される統合知識、再生成可能
-- provenance で Layer 1 ↔ Layer 2 のリンクを保持
+- **Layer 1: Capture** — hook event の TTL 付き安全網。既定検索には出さない
+- **Layer 2: Observation** — client save または Stop checkpoint 由来の canonical record
+- **Layer 3: Memory** — legacy / curated record。自動生成は必須にしない
+- provenance で source と派生関係を保持する
 
-### LLM 配置
+### サーバー側 LLM ゼロ
 
-- **hot path（save / search）**: LLM ゼロ、即応答
-- **cold path（dreaming）**: 夜間バッチで集約、コスト透明
-- クライアント LLM が観測の整形・解釈を担当（hot path で LLM 呼ばない）
+- MCP / REST / scheduled job の全経路で外部 LLM を呼ばない
+- クライアント LLM が観測の整形・意味判断を担当する
+- Stop の最終応答は再要約せず、決定論的に observation 化する
+- server に LLM API key、provider client、fallback 設定は不要
 
 ### 検索
 
@@ -36,12 +38,12 @@ archfill 製の MCP ベース記憶レイヤー。観測・記憶・想起・dre
 ```
 tsumugi/
 ├── apps/
-│   ├── server/           # MCP server + REST API + dreaming worker (TypeScript)
+│   ├── server/           # MCP server + REST API + deterministic worker (TypeScript)
 │   └── ui/               # admin UI (React + Vite + Tailwind + shadcn)
 ├── packages/
 │   └── shared/           # 型 / Zod スキーマ共有
 ├── compose.yml           # tsumugi-front + tsumugi-server + tsumugi-postgres
-├── Dockerfile            # server image (Node + onnxruntime + dreaming worker)
+├── Dockerfile            # server image (Node + onnxruntime)
 ├── Dockerfile.postgres   # postgres + pgvector + pg_bigm
 ├── apps/ui/Dockerfile    # front image (nginx 配信 + /api・/mcp を server に proxy)
 ├── package.json          # pnpm workspace root
@@ -58,8 +60,8 @@ tsumugi/
 | ORM             | Drizzle ORM + node-postgres                                          |
 | DB              | PostgreSQL 18 + pgvector + pg_bigm                                   |
 | Embedding       | BGE-M3 via `@xenova/transformers`（ONNX）                            |
-| LLM             | provider 非依存（Anthropic / OpenAI 互換 / Z.ai / Ollama）、tier 別  |
-| Resilience      | 3 層 retry + per-item failure tracking + provider fallback           |
+| Semantic curation | 呼び出し元クライアントへ委譲                                      |
+| Maintenance     | deterministic promotion / retention / soft archive                    |
 | Frontend        | React 19 / Vite 8 / TailwindCSS 4 / shadcn / TanStack Router & Query |
 | Package manager | pnpm（workspace）                                                    |
 | Task runner     | pnpm scripts（mise は任意）                                          |
@@ -111,15 +113,10 @@ pnpm install
 
 devShell 内では `MISE_DISABLE_TOOLS=node,pnpm` を設定し、mise は task runner としてだけ使える。
 
-## LLM 用途と tier
+## モデル処理
 
-| tier      | タスク                                                                           | 設定方法                         |
-| --------- | -------------------------------------------------------------------------------- | -------------------------------- |
-| LOW       | session narrative / decision 要約 / cross-session synthesize / time-aware update | `LLM_LOW_*` env で provider 指定 |
-| MID       | AUDN 判定 / decision 矛盾検出                                                    | `LLM_MID_*` env で provider 指定 |
-| embedding | BGE-M3（ローカル ONNX）                                                          | —                                |
-
-各 tier の primary が失敗したら `LLM_*_FALLBACK_*` で指定した provider に自動切替される。詳細は `.env.example` 参照。
+BGE-M3 embedding はローカル ONNX で実行する。これは外部 LLM 呼び出しではない。
+要約、fact 抽出、semantic merge、contradiction 判定はサーバーでは実行しない。
 
 ## クライアント接続
 
@@ -170,15 +167,15 @@ private network (VPN 内、LAN 内) で使う場合はそのままでも可。
 - pg_bigm + pgvector hybrid 検索（RRF fusion）
 - BGE-M3 embedding ラッパ（@xenova/transformers）
 - MCP tool: `save_observation` / `search_memory` / `mark_memory_outdated`
-- LLM は呼ばない、hot path のみ
+- サーバーは外部 LLM を呼ばない
 - Claude Code 1 つから動作確認
 
-### Phase 2: dreaming worker 実装
+### Phase 2: deterministic worker 実装
 
-- cross-session synthesize / time-aware memory update / AUDN judge / decision contradiction / reflection を実装
+- Stop capture → observation promotion、capture sweep、outdated archive を実装
 - cron / scheduled trigger で起動
-- provenance（Layer 1 ↔ Layer 2）の整備
-- LLM tier 設定（LOW / MID）
+- provenance（capture → observation → legacy / curated memory）の整備
+- 旧 LLM job 名は互換 no-op として保持
 
 ### Phase 3: 管理 UI + デプロイ
 
@@ -214,15 +211,15 @@ private network (VPN 内、LAN 内) で使う場合はそのままでも可。
 
 ## 評価ベンチ
 
-各 dreaming ジョブと hybrid search を独立に検証するベンチ基盤を `apps/server/eval/` に同梱。
+hybrid search と provenance policy を独立に検証するベンチ基盤を `apps/server/eval/` に同梱。
 
 ```bash
-mise run -C apps/server bench           # 全 5 ベンチを順次実行
-mise run -C apps/server bench-audn      # 個別
+pnpm --filter @tsumugi/server bench:search
+pnpm --filter @tsumugi/server eval:search-provenance-policy
 ```
 
-- 合成 fixture (132 ケース) — 公開・再現可能
-- LLM resilience の vitest unit test (14 ケース)
+- 合成 fixture — 公開・再現可能
+- private fixture — local only、raw content を log / artifact へ出さない
 - 詳細と運用は [docs/adr/0009-eval-as-migration-validation.md](docs/adr/0009-eval-as-migration-validation.md) 参照
 
 これらは component 単体の正しさを測るもので、end-to-end QA benchmark (LoCoMo / LongMemEval 等) とは別軸。

@@ -48,7 +48,7 @@ describe("Admin overview operational accuracy", () => {
     expect(runQueries).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "r.status = 'running' AND r.started_at < now() - interval '2 hours'",
+          "r.status = 'running' AND r.job_kind IN ('promote-captures', 'sweep-captures', 'archive-outdated')",
         ),
         expect.stringContaining("status IN ('failed', 'partial')"),
       ]),
@@ -99,13 +99,17 @@ describe("Admin overview operational accuracy", () => {
     }
   });
 
-  it("current issue一覧からfailed/partial run履歴を除外する", async () => {
+  it("current issue一覧をdeterministic runtimeだけに限定する", async () => {
     await adminRepo.listOperationIssues({ limit: 50 });
 
     const query = normalizeSql(executeMock.mock.calls[0][0]);
     expect(query).toContain("r.status = 'running'");
     expect(query).not.toContain("r.status IN ('failed', 'partial')");
+    expect(query).toContain("w.promotion_kind = 'stop_checkpoint'");
     expect(query).toContain("w.status = 'deferred' AND w.next_attempt_at <= now()");
-    expect(query).toContain("f.status = 'deferred' AND f.next_attempt_at <= now()");
+    expect(query).not.toContain("FROM observation_promotion_facts");
+    expect(query).not.toContain("o.promotion_state IN ('quarantined', 'legacy_partial')");
+    expect(query).not.toContain("m.llm_quarantined_at");
+    expect(query).toContain("m.outdated_at IS NOT NULL");
   });
 });

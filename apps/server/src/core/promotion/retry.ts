@@ -1,27 +1,28 @@
 import { RetryPromotionIssueInput } from "@tsumugi/shared";
-import { buildCaptureWindows } from "../capture/window.js";
 import { captureRepo } from "../../data/repos/capture.js";
 import { capturePromotionWindowRepo } from "../../data/repos/capture-promotion-window.js";
 import { promotionRecoveryRepo } from "../../data/repos/promotion-recovery.js";
 import { ValidationError } from "../../lib/errors.js";
 
-function sameIds(left: string[], right: string[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((id, index) => id === right[index])
-  );
-}
-
 async function retryWindow(id: string): Promise<void> {
   const window = await capturePromotionWindowRepo.findById(id);
-  if (!window || !["deferred", "quarantined"].includes(window.status)) {
+  if (
+    !window ||
+    window.promotion_kind !== "stop_checkpoint" ||
+    !["deferred", "quarantined"].includes(window.status)
+  ) {
     throw new ValidationError("promotion window is not retryable");
   }
 
-  const captures = await captureRepo.listForWindow(id);
+  const captures = await captureRepo.listActiveForWindow(id);
   if (
     captures.length !== window.capture_count ||
-    captures.some((capture) => capture.promotion_window_id !== id)
+    captures.some(
+      (capture) =>
+        capture.promotion_window_id !== id ||
+        capture.hook_event !== "Stop" ||
+        !capture.continuity_content?.trim(),
+    )
   ) {
     throw new ValidationError(
       "promotion window source captures are no longer available",
@@ -30,15 +31,7 @@ async function retryWindow(id: string): Promise<void> {
 
   let inputContent = window.input_content;
   if (!inputContent) {
-    const candidate = buildCaptureWindows(captures).find((item) =>
-      sameIds(item.captureIds, captures.map((capture) => capture.id)),
-    );
-    if (!candidate) {
-      throw new ValidationError(
-        "promotion window source captures are no longer available",
-      );
-    }
-    inputContent = candidate.content;
+    inputContent = captures[0]!.continuity_content!.trim();
   }
 
   if (
@@ -56,23 +49,22 @@ export async function retryPromotionIssue(raw: unknown): Promise<{
   ok: true;
   kind: "window" | "fact" | "observation";
   id: string;
+  skipped?: true;
+  reason?: "removed_server_llm";
 }> {
   const input = RetryPromotionIssueInput.parse(raw);
-  let updated = false;
   switch (input.kind) {
     case "window":
       await retryWindow(input.id);
-      updated = true;
-      break;
+      return { ok: true, kind: input.kind, id: input.id };
     case "fact":
-      updated = await promotionRecoveryRepo.retryFact(input.id);
-      break;
     case "observation":
-      updated = await promotionRecoveryRepo.retryObservation(input.id);
-      break;
+      return {
+        ok: true,
+        kind: input.kind,
+        id: input.id,
+        skipped: true,
+        reason: "removed_server_llm",
+      };
   }
-  if (!updated) {
-    throw new ValidationError(`${input.kind} is not retryable`);
-  }
-  return { ok: true, kind: input.kind, id: input.id };
 }

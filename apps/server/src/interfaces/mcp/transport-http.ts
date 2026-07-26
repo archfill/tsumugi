@@ -39,6 +39,7 @@ export interface HttpRuntimeOptions {
 }
 
 export interface HttpRuntime {
+  port: number;
   shutdown: () => Promise<RuntimeShutdownResult>;
 }
 
@@ -159,7 +160,7 @@ export async function startHttp(
     // Scheduler
     const sched = getActiveScheduler();
     components["scheduler"] = {
-      // An operator may intentionally stop all dreaming/LLM work. Treat that
+      // An operator may intentionally stop all scheduled maintenance. Treat that
       // configuration as ready; only an enabled scheduler that failed to
       // start should degrade health.
       ok: sched !== null || !options.scheduler.enabled,
@@ -207,7 +208,12 @@ export async function startHttp(
   activeScheduler = startScheduler(options.scheduler);
 
   let shutdownPromise: Promise<RuntimeShutdownResult> | undefined;
+  const address =
+    typeof httpServer.address === "function" ? httpServer.address() : null;
+  const listeningPort =
+    typeof address === "object" && address !== null ? address.port : port;
   return {
+    port: listeningPort,
     shutdown: () => {
       shutdownPromise ??= (async () => {
         const scheduler = activeScheduler;
