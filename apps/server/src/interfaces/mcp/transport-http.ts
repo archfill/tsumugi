@@ -159,8 +159,14 @@ export async function startHttp(
     // Scheduler
     const sched = getActiveScheduler();
     components["scheduler"] = {
-      ok: sched !== null,
-      detail: { jobs: sched?.jobs.length ?? 0 },
+      // An operator may intentionally stop all dreaming/LLM work. Treat that
+      // configuration as ready; only an enabled scheduler that failed to
+      // start should degrade health.
+      ok: sched !== null || !options.scheduler.enabled,
+      detail: {
+        enabled: options.scheduler.enabled,
+        jobs: sched?.jobs.length ?? 0,
+      },
     };
 
     // Embedder: read warmup gauge from registry

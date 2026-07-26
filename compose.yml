@@ -54,6 +54,7 @@ services:
       NODE_ENV: production
       HF_CACHE: /app/.cache/huggingface
       # LLM provider 設定 (1Password tsumugi-dev env から流入)
+      LLM_ENABLED: ${LLM_ENABLED:-true}
       LLM_LOW_PROVIDER: ${LLM_LOW_PROVIDER:-openai-compat}
       LLM_LOW_API_KEY: ${LLM_LOW_API_KEY:-}
       LLM_LOW_MODEL: ${LLM_LOW_MODEL:-glm-5.2}

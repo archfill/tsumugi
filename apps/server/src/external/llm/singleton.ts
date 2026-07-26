@@ -7,6 +7,7 @@ import {
 import {
   TsumugiError,
   ExternalError,
+  LlmDisabledError,
   ProviderUnavailableError,
 } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
@@ -327,10 +328,14 @@ function buildTierClient(tier: LlmTier, tierCfg: LlmTierConfig): LlmClient {
 }
 
 export function getLlm(tier: LlmTier): LlmClient {
+  const config = loadConfig();
+  if (!config.llm.enabled) {
+    throw new LlmDisabledError("LLM execution is disabled via LLM_ENABLED=false");
+  }
+
   const cached = cache.get(tier);
   if (cached) return cached;
 
-  const config = loadConfig();
   const tierCfg = tier === "low" ? config.llm.low : config.llm.mid;
   const client = buildTierClient(tier, tierCfg);
   cache.set(tier, client);
@@ -348,6 +353,9 @@ function circuitAcceptsCall(cfg: LlmModelConfig): boolean {
 /** Check before claiming durable work so an open circuit consumes no attempt. */
 export function assertLlmAvailable(tier: LlmTier): void {
   const config = loadConfig();
+  if (!config.llm.enabled) {
+    throw new LlmDisabledError("LLM execution is disabled via LLM_ENABLED=false");
+  }
   const tierCfg = tier === "low" ? config.llm.low : config.llm.mid;
   const candidates = [tierCfg.primary, tierCfg.fallback].filter(
     (cfg): cfg is LlmModelConfig => cfg !== undefined,

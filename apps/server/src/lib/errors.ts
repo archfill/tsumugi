@@ -12,6 +12,9 @@ export class ValidationError extends TsumugiError {}
 export class NotFoundError extends TsumugiError {}
 export class ExternalError extends TsumugiError {} // embedding / LLM / external API
 
+/** Operator-controlled global stop; this is not a provider failure. */
+export class LlmDisabledError extends TsumugiError {}
+
 export type ProviderFailureReason =
   | "auth"
   | "circuit_open"

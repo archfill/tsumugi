@@ -4,6 +4,7 @@ const serverMock = vi.hoisted(() => ({
   close: vi.fn((callback: (error?: Error) => void) => callback()),
   closeIdleConnections: vi.fn(),
   closeAllConnections: vi.fn(),
+  fetch: undefined as ((request: Request) => Promise<Response>) | undefined,
 }));
 const schedulerMock = vi.hoisted(() => ({
   jobs: [{ job: "promote-captures", cronExpr: "0,30 * * * *" }],
@@ -15,11 +16,16 @@ const coordinatorMock = vi.hoisted(() => ({
 }));
 
 vi.mock("@hono/node-server", () => ({
-  serve: vi.fn(() => serverMock),
+  serve: vi.fn(({ fetch }) => {
+    serverMock.fetch = fetch;
+    return serverMock;
+  }),
 }));
 
 vi.mock("../../src/core/dreaming/scheduler.js", () => ({
-  startScheduler: vi.fn(() => schedulerMock),
+  startScheduler: vi.fn((config: { enabled: boolean }) =>
+    config.enabled ? schedulerMock : null,
+  ),
 }));
 
 vi.mock("../../src/core/dreaming/execution.js", () => ({
@@ -40,6 +46,7 @@ describe("HTTP runtime shutdown", () => {
     serverMock.close.mockImplementation((callback) => callback());
     serverMock.closeIdleConnections.mockReset();
     serverMock.closeAllConnections.mockReset();
+    serverMock.fetch = undefined;
     schedulerMock.stop.mockReset();
     coordinatorMock.drain.mockReset();
     coordinatorMock.drain.mockResolvedValue({
@@ -97,5 +104,28 @@ describe("HTTP runtime shutdown", () => {
     });
     expect(serverMock.closeIdleConnections).toHaveBeenCalledOnce();
     expect(serverMock.closeAllConnections).toHaveBeenCalledOnce();
+  });
+
+  it("reports healthy when dreaming is intentionally disabled", async () => {
+    await startHttp(0, {
+      scheduler: {
+        enabled: false,
+        promoteCaptures: "",
+        promoteObservations: "",
+        sweepCaptures: "",
+        synthesize: "",
+        timeUpdate: "",
+        decisionContradiction: "",
+      },
+      shutdownDrainTimeoutMs: 45_000,
+    });
+
+    const response = await serverMock.fetch!(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "ok",
+      components: { scheduler: { ok: true, detail: { enabled: false, jobs: 0 } } },
+    });
   });
 });

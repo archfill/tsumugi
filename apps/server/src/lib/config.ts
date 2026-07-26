@@ -50,6 +50,8 @@ export interface Config {
   hfCache?: string;
   shutdownDrainTimeoutMs: number;
   llm: {
+    /** Global kill switch for every server-side LLM call. */
+    enabled: boolean;
     low: LlmTierConfig;
     mid: LlmTierConfig;
   };
@@ -225,6 +227,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
         process.env["SHUTDOWN_DRAIN_TIMEOUT_MS"],
       ) ?? 120_000,
     llm: {
+      enabled: process.env["LLM_ENABLED"] !== "false",
       low: loadTier("low"),
       mid: loadTier("mid"),
     },

@@ -40,7 +40,14 @@ describe("LLM tier profiles", () => {
       reasoningEffort: "high",
       timeoutMs: 90_000,
     });
+    expect(config.llm.enabled).toBe(true);
     expect(config.shutdownDrainTimeoutMs).toBe(120_000);
+  });
+
+  it("disables every server-side LLM call when LLM_ENABLED is false", () => {
+    vi.stubEnv("LLM_ENABLED", "false");
+
+    expect(loadConfig(["--http"]).llm.enabled).toBe(false);
   });
 
   it("loads a custom graceful shutdown drain timeout", () => {

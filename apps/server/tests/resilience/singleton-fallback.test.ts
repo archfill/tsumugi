@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config, LlmModelConfig } from "../../src/lib/config.js";
 import type { LlmClient } from "../../src/external/llm/types.js";
-import { ProviderUnavailableError } from "../../src/lib/errors.js";
+import {
+  LlmDisabledError,
+  ProviderUnavailableError,
+} from "../../src/lib/errors.js";
 
 const singletonState = vi.hoisted(() => ({
   primary: {
@@ -44,6 +47,7 @@ function configWithFallback(): Config {
     mode: "http",
     shutdownDrainTimeoutMs: 120_000,
     llm: {
+      enabled: true,
       low: {
         primary: {
           provider: "anthropic",
@@ -95,6 +99,15 @@ describe("LLM singleton fallback", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("rejects calls before creating a provider client when LLM is disabled", async () => {
+    singletonState.config!.llm.enabled = false;
+    const { getLlm } = await loadSingleton();
+
+    expect(() => getLlm("low")).toThrow(LlmDisabledError);
+    expect(singletonState.primary.complete).not.toHaveBeenCalled();
+    expect(singletonState.fallback.complete).not.toHaveBeenCalled();
   });
 
   it("uses fallback when primary fails", async () => {
