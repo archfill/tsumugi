@@ -1,7 +1,14 @@
 # ADR-011: Claude Code hook 設計 — 新規 LLM 呼出を発動せず、agent の既存セッションを augment する
 
 - 日付: 2026-06-16
-- ステータス: Accepted
+- 最終更新: 2026-07-27
+- ステータス: Partially superseded by ADR-014 (2026-07-26)
+
+> Current contract: SessionStart / UserPromptSubmit / PreToolUseのinject-only原則と、
+> hookから新規LLM callを発動しない決定は維持する。一方、Stop hookを廃止する決定は
+> ADR-014で置換され、現在はraw Stop eventをLayer 1 captureへdeterministic insertする。
+> captureは同期経路で意味変換せず、後段でLayer 2 observationへ昇格する。
+> 以下のdreaming LLMや旧layer番号への言及は、2026-06-16時点のhistorical contextである。
 
 ## コンテキスト
 
@@ -61,13 +68,16 @@ claude-mem 方式 (SDK + OAuth) を検討したが、Anthropic の公式
 両方とも **Anthropic の billing 政策に直接依存**しており、
 direction-b (Anthropic 政策の影響を最小化する) の精神と相容れない。
 
-### tsumugi 既存方針との関係
+### tsumugi 既存方針との関係 (2026-06-16時点)
 
 ADR-003 (`thin-tool-client-llm-delegation`):
 
 > hot path（`save_observation` / `search_memory`）では LLM を呼ばない。
 > 観測の整形・構造化はクライアント LLM（呼び出し元エージェント）の責務とする。
 > LLM を呼ぶのは dreaming フェーズ（Layer 2 synthesis）のみ。
+
+この引用は改訂前ADR-003のhistorical textである。現行ADR-003はserver-wide zero LLMへ
+拡張され、dreamingを含めてserverから外部LLMを呼ばない。
 
 tsumugi は本来「クライアントが整形済みを送る」設計。
 yui hook のように「raw を投げて server が要約」する流れは
@@ -94,12 +104,12 @@ agent の LLM (Claude Code 自身) は当然 LLM 処理を行うが、
 独立した LLM call を出すと、別 billing / 認証 / 政策の議論が
 そのつど発生する。tsumugi はその新規発動を避ける。
 
-## 決定
+## Historical decision (partially superseded)
 
-### 1. hook は inject-only の 3 本のみ
+### 1. hook は inject-only の3本のみ (Stop部分はADR-014で置換)
 
-obs を **作成する hook は全廃**。inject だけを行う 3 本に絞る。
-これにより Layer 1 純度を保ちつつ recall を補強する。
+当時はobsを **作成する hook は全廃**し、injectだけを行う3本に絞った。
+現在のStop hookはobservationを直接作らず、Layer 1 captureを保存するため、この禁止対象ではない。
 
 | Hook                                                | 採否     | 理由                                                                                                                                         |
 | --------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,7 +117,7 @@ obs を **作成する hook は全廃**。inject だけを行う 3 本に絞る�
 | `UserPromptSubmit`                                  | **採用** | resume / error pattern を検出し、`search_memory` 結果を inject。recall 補強の中核 (mem0 方式を採用)                                          |
 | `PreToolUse` (`matcher: Read`)                      | **採用** | 開かれたファイルに関連する過去 memory を inject。ファイル単位の context 補強 (mem0 / claude-mem 方式を採用)                                  |
 | `PostToolUse`                                       | 廃止     | yui の汚染主因 (削除 3,353 件)。tsumugi は新規 LLM 呼出を発動しないので claude-mem の「SDK skip 判定」も再現できない                         |
-| `Stop`                                              | 廃止     | hook 駆動の deterministic 切り抜きは品質が低い (検索価値薄)。yui の `session ended: <uuid>` 汚染パターンと構造的に同じ                       |
+| `Stop`                                              | 置換済み | ADR-014によりraw Stop capture + deterministic Layer 2 promotionへ置換。旧`session ended: <uuid>` observation生成は廃止                     |
 | `PreCompact`                                        | 廃止     | mem0 自身が「fallback / noise prone / 90 日 expire」と認めている薄い保存。SessionStart の `compact` matcher と nudge inject で実質代替できる |
 | `PreToolUse` (`Write\|Edit\|MultiEdit`)             | 廃止     | tsumugi はファイルベースの設定/状態を持たない (DB のみ) ので block 対象がない                                                                |
 | `PreToolUse` (`mcp__tsumugi__*`)                    | 廃止     | MCP schema validation で必須項目を強制可能、hook 補完は過剰                                                                                  |

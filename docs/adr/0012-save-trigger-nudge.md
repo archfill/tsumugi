@@ -1,7 +1,13 @@
 # ADR-012: save_observation の trigger 不在を milestone-event nudge で補う
 
 - 日付: 2026-06-17
+- 最終更新: 2026-07-27
 - ステータス: Proposed
+
+> Re-evaluation required: ADR-014のdeterministic captureにより、agentが
+> `save_observation`を呼ばないsessionにもLayer 1 captureとStop由来Layer 2 observationが残る。
+> 本ADRは未実装のまま維持し、milestone nudgeがcapture済み内容を超える品質改善を示す場合だけ
+> 採用する。以下の旧LLM job名は起案時のhistorical exampleである。
 
 ## コンテキスト
 
