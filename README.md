@@ -2,7 +2,7 @@
 
 archfill 製の MCP ベース記憶レイヤー。capture・観測・想起・決定論的保守を担う、自律エージェント向けメモリインフラ。
 
-> **Status: pre-1.0 / single-user / unverified in production.**
+> **Status: pre-1.0 / single-user / production deployed.**
 > 本リポジトリは作者の個人プロジェクトとして開発中。長期運用・大規模負荷・複数ユーザ環境での検証は未実施。実運用での導入を推奨できる段階ではない。
 
 ## コンセプト
@@ -155,59 +155,9 @@ private network (VPN 内、LAN 内) で使う場合はそのままでも可。
 
 ## ステータス・ロードマップ
 
-> Phase 1〜3 で tsumugi が独立サービスとして稼働。Phase 4〜5 は内部利用システムの移行・既存実装の撤去。Phase 6（任意）は既存 memory 系ツールの置き換え。
-
-### Phase 0: 設計確定・scaffold（完了）
-
-- monorepo 構築、依存最新化、typecheck pass
-
-### Phase 1: tsumugi MCP server 最小動作
-
-- Drizzle schema（Observation / Memory / Decision / Link）
-- pg_bigm + pgvector hybrid 検索（RRF fusion）
-- BGE-M3 embedding ラッパ（@xenova/transformers）
-- MCP tool: `save_observation` / `search_memory` / `mark_memory_outdated`
-- サーバーは外部 LLM を呼ばない
-- Claude Code 1 つから動作確認
-
-### Phase 2: deterministic worker 実装
-
-- Stop capture → observation promotion、capture sweep、outdated archive を実装
-- cron / scheduled trigger で起動
-- provenance（capture → observation → legacy / curated memory）の整備
-- 旧 LLM job 名は互換 no-op として保持
-
-### Phase 3: 管理 UI + デプロイ
-
-- React admin UI（観測・記憶一覧、検索、編集、dreaming 履歴、手動実行）
-- compose デプロイ
-- VPN 経由で複数クライアントから接続検証
-- 多クライアント横断の動作確認
-
-> ── ここまでで tsumugi が独立サービスとして稼働 ──
-
-### Phase 4: 内部利用システムの移行（最大の山場）
-
-- 内部利用システムに tsumugi MCP クライアント実装
-- 既存 memory モジュールを tsumugi 経由呼び出しに差し替え
-- 既存テーブルを tsumugi schema にデータ移行（provenance 維持）
-- feature flag による段階移行 + 検証期間
-- 本番カットオーバー + rollback 計画
-- 回帰テスト一式
-
-### Phase 5: 内部利用システムのクリーンアップ
-
-- 内部利用システム側の memory 関連モジュール削除
-- DB schema の関連テーブル drop（マイグレーション）
-- 不要依存削除
-- CI / docs 更新
-
-> ── ここで「内部利用システムから memory が完全切り出し」 ──
-
-### Phase 6（任意）: 既存 memory ツールの置き換え
-
-- 既存 memory 系ツールの設定を外す
-- 自動取得を tsumugi 側 hook に置換
+実装状況と次の優先順位は [`docs/ROADMAP.md`](docs/ROADMAP.md)、
+意思決定と lifecycle status は各 ADR を唯一の更新先とする。
+README では phase、タスク、status を重複管理しない。
 
 ## 評価ベンチ
 

@@ -3,6 +3,13 @@
 - 日付: 2026-06-15
 - ステータス: Accepted
 
+> この ADR は移行方式、境界、lifecycle status の唯一の更新先であり、進捗は管理しない。
+> 実装状況と次の優先順位は [`../ROADMAP.md`](../ROADMAP.md) だけで管理する。
+>
+> 2026-07-26: ADR-003 / ADR-014 により server-side LLM、AUDN、semantic dreaming
+> job は撤去された。以下の 2026-06-16 gap 分析は当時の snapshot として残すが、
+> cutover 要件は zero-LLM / observation-first の現行契約で再確認する。
+
 ## コンテキスト
 
 Phase 0〜3 を通じて tsumugi は独立サービスとして本番稼働した
@@ -97,25 +104,26 @@ Phase 4 は archfill の memory データ移行 + yui 側 memory 実装撤去ま
 Step 2 の前倒し調査結果。yui の memory 関連 surface (~65 service method
 
 - 14 HTTP endpoint + 5 job + 27 concept) を tsumugi の現状 surface
-  (4 MCP tool + 10 REST + 5 dreaming job) と照合し、cutover 前に
+  と照合し、cutover 前に
   どこを埋めるべきかを確定させた。
 
 ### A. tsumugi に同等あり — そのまま cutover 可
 
 `save_observation` / `search_memory` (hybrid) / `list/count/archive`
-系 / dreaming jobs / link traversal 等、約 30 操作。
+系 / link traversal 等。
 
 ### B. 思想差で代替・廃止 — cutover で消す
 
-yui 側のこれらは tsumugi の自動 pipeline で吸収するか、設計判断で捨てる:
+yui 側のこれらは deterministic capture / observation-first recall へ置き換えるか、
+client-assisted な明示操作へ移すか、設計判断で廃止する:
 
 | yui の機能                                                 | tsumugi での扱い                               |
 | ---------------------------------------------------------- | ---------------------------------------------- |
-| `MemoryPromoteService.promote_session_obs`                 | dreaming `promote-observations` で自動         |
-| `ObservationSummarizeService.summarize_obs`                | tsumugi は素の content を保存 (事前要約しない) |
-| `apply_summarization` (後付け narrative)                   | 同上                                           |
-| `list_promote_candidates` (半自動 UI 候補)                 | 自動 promote のみで UI フロー無し              |
-| `user_id` / `agent_id` / `tier` / `external_session` tuple | single-tenant + `project_tag` に倒す           |
+| `MemoryPromoteService.promote_session_obs`                 | semantic memory へ自動昇格せず observation を主要検索対象にする |
+| `ObservationSummarizeService.summarize_obs`                | client が整形した content を再要約せず保存                  |
+| `apply_summarization` (後付け narrative)                   | server では行わず、必要なら client-assisted な明示操作にする |
+| `list_promote_candidates` (半自動 UI 候補)                 | curated memory が必要な場合だけ別途明示操作として設計する    |
+| `user_id` / `agent_id` / `tier` / `external_session` tuple | single-tenant + `project_tag` に倒す                       |
 
 ### C. tsumugi に未実装、Phase 4 着手前に追加が必要 ⚠️
 
@@ -148,48 +156,36 @@ yui 側のこれらは tsumugi の自動 pipeline で吸収するか、設計判
 
 ### D. tsumugi にだけある (cutover で得られる)
 
-- `decision-contradiction` (dreaming job)
-- `AUDN judge` (job 化)
-- **LLM quarantine** (連続失敗で記憶を隔離)
+- deterministic Stop capture → observation promotion
+- observation-first hybrid recall
+- source / project / timestamp / outdated を含む provenance
 - 明示的 **Link** テーブルによる provenance graph
+- reversible archive と privacy-safe quality audit
 
 ### 追加方針
 
-「高」3 件は Phase 4 cutover の前提として **tsumugi 側 PR を先に出す**:
+当時「高」とした3件は、Phase 4 cutover 前に現行契約で必要性を再確認する:
 
 - MemoryHistory schema + audit / rollback REST
 - user mute API (single-tenant でも「自分の記憶を黙らせる」概念は残す)
 - GET /observations/:id + MCP `get_observation`
 
-「中」のうち `list_observations` filter と recency 軸は cutover 前に
-入れた方が UX 連続性が保てる。残り (TTL / retention / session summary
-/ timeline) は cutover 後に追加で問題ない。
+確認の結果、yui の実利用で必須と判断した surface だけを tsumugi 側へ追加する。
+旧server-side LLM機能との互換を理由に gap を埋めない。
 
 「session summary」概念は yui 固有の負債色が強いため、cutover で
 「廃止」も選択肢。判断は Step 2-3 で yui の呼出箇所を見てから決める。
 
-## 進行ステップ
+## 移行チェックポイント
 
-| Step | 内容                                                                              | 想定工数   |
-| ---- | --------------------------------------------------------------------------------- | ---------- | --------------------------- |
-| Step | 内容                                                                              | 想定工数   | 状態                        |
-| ---- | -----------------------------------------------------------------------------     | ---------- | ----                        |
-| 1    | このADR                                                                           | 30 分      | ✅                          |
-| 2    | yui の memory 層 API surface 調査、呼出箇所一覧化                                 | 1-2 時間   | ✅ (2026-06-16)             |
-| 2.5  | **tsumugi 側 gap 補填 PR** (MemoryHistory + rollback / user mute / GET obs by id) | 1-2 日     | ⏳                          |
-| 2.6  | tsumugi 側 中優先 gap (list_observations filter / search recency 軸)              | 半日       | ⏳                          |
-| 3    | yui に Python MCP client を導入、tsumugi 疎通確認                                 | 半日       | ⏳                          |
-| 4    | yui memory_service の adapter 実装 (interface 維持、内部実装置換)                 | 1-2 日     | ⏳                          |
-| 5    | データ移行スクリプト整備 (eval/seed-from-yui.ts を発展)                           | 半日       | ✅ (PR #17 / #21)           |
-| 6    | DB snapshot → 移行実行 → cutover                                                  | 半日       | 🟡 移行のみ完了、cutover 未 |
-| 7    | 1 週間観察                                                                        | (経過待ち) | ⏳                          |
-| 8    | yui コード削除 + DB テーブル drop                                                 | 半日       | ⏳                          |
+進捗や完了状態はここへ書かず、[`../ROADMAP.md`](../ROADMAP.md) で管理する。
+この ADR が定める順序は次のとおり。
 
-Step 2.5 / 2.6 は API surface ギャップ分析 (上記セクション C) で
-洗い出した tsumugi 側の不足機能を Step 4 の前に埋めるため新設。
-
-合計 **6-8 日**の実作業 + **1 週間**の安定観察期間
-(gap 補填の Step 2.5 / 2.6 で初版見積 4-6 日から増加)。
+1. yui の実利用 surface を現行の zero-LLM 契約に対して再確認する
+2. 必須 gap だけを埋める
+3. yui に tsumugi client / adapter を導入する
+4. snapshot と rollback dry-run 後に cutover する
+5. 安定観察後に yui の旧 memory 実装とschemaを撤去する
 
 ## 検証
 
@@ -204,8 +200,8 @@ Step 2.5 / 2.6 は API surface ギャップ分析 (上記セクション C) で
 ### ポジ
 
 - tsumugi OSS は single-tenant の単純さを保てる
-- archfill の memory がより堅牢な tsumugi pipeline (3 層 resilience /
-  dreaming scheduler / eval bench) に乗る
+- archfill の memory が three-layer capture、observation-first recall、
+  deterministic maintenance、eval bench に乗る
 - yui のコードベースから memory 関連の重い実装 (embedder / dreaming /
   audn / synthesize / time-update 等) を撤去でき、yui は project / agent
   / plan / task の管理層に責務を集中できる
@@ -215,8 +211,8 @@ Step 2.5 / 2.6 は API surface ギャップ分析 (上記セクション C) で
 
 ### ネガ
 
-- dual-write を端折るため、移行直後に未知の挙動差で memory が壊れる
-  可能性が残る (AUDN 25% 不一致が主リスク)
+- dual-write を端折るため、移行直後に client 側の意味判断や検索契約の差で
+  memory / observation の利用挙動が変わる可能性が残る
 - 緩和策: snapshot ベース rollback + yui コード 1 週間保持
 - yui に他 user が増える将来シナリオでは「yui-DB に戻す」or「tsumugi
   に multi-tenant 追加」or「user 別 tsumugi 立てる」のいずれかが必要に
@@ -233,7 +229,9 @@ Step 2.5 / 2.6 は API surface ギャップ分析 (上記セクション C) で
 - ADR-001 (Two-layer architecture)
 - ADR-007 (LLM provider agnostic)
 - ADR-008 (LLM resilience layers)
+- ADR-003 (server-wide zero LLM / client delegation)
+- ADR-014 (Three-layer / deterministic promotion)
 - ADR-009 (eval を yui → tsumugi 移行の acceptance test に位置付ける) ← 数値根拠の出処
 - `apps/server/eval/`: 移行後の drift detection 用 bench
 - `apps/server/eval/seed-from-yui.ts`: データ移行スクリプトの土台
-- README `Phase 4` セクション
+- [`../ROADMAP.md`](../ROADMAP.md): 実装状況と次の優先順位の唯一の管理先

@@ -155,8 +155,8 @@ throw new ValidationError("content is required");
 | 媒体                                 | 役割                                                                |
 | ------------------------------------ | ------------------------------------------------------------------- |
 | [`docs/VISION.md`](docs/VISION.md)   | 上位の判断軸 (品質駆動、5 軸、原則、scope 外)                       |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **全 ADR の status と実装優先順位の俯瞰**。「次に何をするか」はここ |
-| `docs/adr/`                          | 個別の不変決定 (ADR)                                                |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **実装状況と優先順位の俯瞰**。「次に何をするか」はここ               |
+| `docs/adr/`                          | 個別の不変決定と lifecycle status の唯一の更新先                    |
 | `docs/research/`                     | 調査メモ、ADR 起案前の素材                                          |
 
 設計判断に影響しそうな実装をする前は、**`VISION.md` の 5 品質軸** (capture / recall /
