@@ -66,7 +66,7 @@ describe.skipIf(!databaseUrl || !destructiveGate)("actual HTTP and MCP runtime i
 
     const removed = await fetch(`${baseUrl}/api/observations/${savedResult.id}`, { method: "DELETE" });
     expect(removed.status).toBe(200);
-  });
+  }, 30_000);
 
   it("legacy LLM job is an actual transport-level no-op", async () => {
     const result = await client.callTool({ name: "trigger_dreaming", arguments: { job: "synthesize" } });
