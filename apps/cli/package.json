@@ -37,7 +37,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@clack/prompts": "^1.5.1",
+    "@clack/prompts": "^1.8.1",
     "picocolors": "^1.1.1"
   },
   "scripts": {
