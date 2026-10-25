@@ -6,7 +6,7 @@
 
 ARG NODE_VERSION=22-bookworm-slim
 ARG PNPM_VERSION=11.6.0
-ARG NGINX_VERSION=1.27-alpine
+ARG NGINX_VERSION=1.30-alpine
 
 # --- Stage 1: builder ---
 FROM node:${NODE_VERSION} AS builder
@@ -30,6 +30,8 @@ RUN pnpm --filter @tsumugi/ui... -r build
 
 # --- Stage 2: runtime ---
 FROM nginx:${NGINX_VERSION} AS runtime
+# ベースイメージの更新を待たずに、ビルド時点の OS パッケージを取り込む
+RUN apk upgrade --no-cache
 COPY --from=builder /workspace/apps/ui/dist /usr/share/nginx/html
 COPY apps/ui/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
