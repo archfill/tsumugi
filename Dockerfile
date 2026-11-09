@@ -46,6 +46,12 @@ ENV PORT=8000
 
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 
+# PID 1 を tini にする。node は孤児になった子プロセスを回収しないため、
+# healthcheck の timeout で取り残された `node -e ...` などがゾンビとして溜まる。
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends tini \
+  && rm -rf /var/lib/apt/lists/*
+
 # server の deploy (prod 依存のみ抽出)
 COPY --from=builder /workspace/pnpm-workspace.yaml /workspace/pnpm-lock.yaml /workspace/package.json /workspace/tsconfig.base.json ./
 COPY --from=builder /workspace/packages/shared ./packages/shared
@@ -58,6 +64,8 @@ EXPOSE 8000
 
 # HF キャッシュは volume にマウント想定
 ENV HF_CACHE=/app/.cache/huggingface
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # HTTP モードで起動 (stdio が必要なら CMD override)
 CMD ["node", "apps/server/dist/index.js", "--http"]
