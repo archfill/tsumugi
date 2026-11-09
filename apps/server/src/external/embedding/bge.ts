@@ -1,10 +1,12 @@
 import process from "node:process";
-import { env, pipeline } from "@xenova/transformers";
+import { Worker } from "node:worker_threads";
+import { ExternalError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import {
   embedderCallDurationSeconds,
   embedderCallsTotal,
 } from "../../lib/metrics.js";
+import type { EmbedWorkerData, EmbedWorkerResponse } from "./worker.js";
 
 export interface Embedder {
   embed(text: string): Promise<Float32Array>;
@@ -21,24 +23,107 @@ export interface BgeEmbedderOptions {
   quantized?: boolean;
 }
 
-export function createBgeEmbedder(opts?: BgeEmbedderOptions): Embedder {
-  const modelId = opts?.modelId ?? "Xenova/bge-m3";
-  const quantized = opts?.quantized ?? true;
+/** Minimal worker surface used by the embedder (lets tests inject a fake). */
+export interface EmbedWorkerHandle {
+  postMessage(value: unknown): void;
+  on(event: "message", listener: (msg: EmbedWorkerResponse) => void): unknown;
+  on(event: "error", listener: (err: Error) => void): unknown;
+  on(event: "exit", listener: (code: number) => void): unknown;
+  ref(): unknown;
+  unref(): unknown;
+  terminate(): unknown;
+}
 
-  // Set cache dir before pipeline init
-  env.cacheDir =
-    opts?.cacheDir ?? process.env["HF_CACHE"] ?? "./.cache/huggingface";
-  env.allowLocalModels = false;
+export type EmbedWorkerFactory = (data: EmbedWorkerData) => EmbedWorkerHandle;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let pipePromise: Promise<any> | null = null;
+function defaultWorkerFactory(data: EmbedWorkerData): EmbedWorkerHandle {
+  // tsx (src/*.ts) loads worker.ts; the built output (dist/*.js) loads worker.js.
+  const url = new URL(
+    import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js",
+    import.meta.url,
+  );
+  return new Worker(url, { workerData: data });
+}
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function getPipeline(): Promise<any> {
-    if (pipePromise === null) {
-      pipePromise = pipeline("feature-extraction", modelId, { quantized });
-    }
-    return pipePromise;
+interface Pending {
+  resolve: (vectors: Float32Array[]) => void;
+  reject: (err: Error) => void;
+}
+
+export function createBgeEmbedder(
+  opts?: BgeEmbedderOptions,
+  createWorker: EmbedWorkerFactory = defaultWorkerFactory,
+): Embedder {
+  const workerData: EmbedWorkerData = {
+    modelId: opts?.modelId ?? "Xenova/bge-m3",
+    quantized: opts?.quantized ?? true,
+    cacheDir:
+      opts?.cacheDir ?? process.env["HF_CACHE"] ?? "./.cache/huggingface",
+  };
+
+  let worker: EmbedWorkerHandle | null = null;
+  let nextId = 1;
+  const pending = new Map<number, Pending>();
+
+  function failAll(err: Error): void {
+    const all = [...pending.values()];
+    pending.clear();
+    for (const p of all) p.reject(err);
+  }
+
+  function discard(w: EmbedWorkerHandle, err: Error): void {
+    if (worker === w) worker = null;
+    failAll(err);
+    void Promise.resolve(w.terminate()).catch(() => undefined);
+  }
+
+  function getWorker(): EmbedWorkerHandle {
+    if (worker !== null) return worker;
+    const w = createWorker(workerData);
+    w.on("message", (msg) => {
+      if (worker !== w) return;
+      const p = pending.get(msg.id);
+      if (p === undefined) return;
+      pending.delete(msg.id);
+      if (pending.size === 0) w.unref();
+      if (msg.ok) p.resolve(msg.vectors);
+      else p.reject(new ExternalError(`embedding failed: ${msg.error}`));
+    });
+    w.on("error", (err) => {
+      discard(
+        w,
+        new ExternalError(`embedding worker error: ${err.message}`, err),
+      );
+    });
+    w.on("exit", (code) => {
+      discard(w, new ExternalError(`embedding worker exited (code ${code})`));
+    });
+    w.unref();
+    worker = w;
+    return w;
+  }
+
+  function request(texts: string[]): Promise<Float32Array[]> {
+    return new Promise<Float32Array[]>((resolve, reject) => {
+      const w = getWorker();
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      w.ref();
+      try {
+        w.postMessage({ id, texts });
+      } catch (err) {
+        pending.delete(id);
+        if (pending.size === 0) w.unref();
+        reject(
+          new ExternalError(
+            `embedding worker postMessage failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            err,
+          ),
+        );
+      }
+    });
   }
 
   return {
@@ -46,10 +131,10 @@ export function createBgeEmbedder(opts?: BgeEmbedderOptions): Embedder {
       const started = process.hrtime.bigint();
       let status: "success" | "error" = "success";
       try {
-        const pipe = await getPipeline();
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-        const output = await pipe(text, { pooling: "cls", normalize: true });
-        const data = output.data as Float32Array;
+        const [data] = await request([text]);
+        if (data === undefined) {
+          throw new ExternalError("embedding worker returned no vector");
+        }
         if (data.length !== 1024) {
           logger.warn(
             { expected: 1024, actual: data.length },
@@ -72,21 +157,7 @@ export function createBgeEmbedder(opts?: BgeEmbedderOptions): Embedder {
       const started = process.hrtime.bigint();
       let status: "success" | "error" = "success";
       try {
-        const pipe = await getPipeline();
-        // Batch input — @xenova/transformers pipeline accepts arrays.
-        // output.data is a flattened Float32Array; output.dims is [N, dim].
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-        const output = await pipe(texts, { pooling: "cls", normalize: true });
-        const flatData = output.data as Float32Array;
-        const dims = output.dims as number[];
-        const n = dims[0] ?? texts.length;
-        const dim = dims[1] ?? 1024;
-
-        const results: Float32Array[] = [];
-        for (let i = 0; i < n; i++) {
-          results.push(flatData.slice(i * dim, (i + 1) * dim));
-        }
-        return results;
+        return await request(texts);
       } catch (err) {
         status = "error";
         throw err;
